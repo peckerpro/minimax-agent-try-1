@@ -26,12 +26,17 @@ def _resolve(path_str: str, cwd: Path | None = None) -> Path:
 
 
 def _atomic_write(target: Path, content: str) -> None:
-    """Write content to target atomically: tempfile in the same dir, then rename."""
+    """Write content to target atomically: tempfile in the same dir, then rename.
+
+    Opens with ``newline=""`` so Windows text-mode does NOT translate ``\n``
+    into ``\r\n`` on the way to disk — byte-literal round-trip is part of
+    the contract of this tool.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     # NamedTemporaryFile is not used directly because on Windows it can't be reopened.
     fd, tmp_path = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         os.replace(tmp_path, target)
     except Exception:

@@ -21,7 +21,20 @@ class CircuitBreaker:
         fail_threshold: int = 5,
         window_seconds: float = 60.0,
         cooldown_seconds: float = 30.0,
+        *,
+        # Day-2 spec names — accepted as keyword-only aliases for the
+        # historical parameter names above. Both are equivalent:
+        #   - `failure_threshold`  == `fail_threshold`
+        #   - `reset_timeout_ms`   == `cooldown_seconds * 1000`
+        failure_threshold: int | None = None,
+        reset_timeout_ms: int | None = None,
     ) -> None:
+        # Apply the day-2 aliases if the historical names weren't given.
+        if failure_threshold is not None:
+            fail_threshold = failure_threshold
+        if reset_timeout_ms is not None:
+            cooldown_seconds = reset_timeout_ms / 1000.0
+
         if fail_threshold < 1:
             raise ValueError("fail_threshold must be >= 1")
         if window_seconds <= 0 or cooldown_seconds <= 0:
@@ -31,6 +44,18 @@ class CircuitBreaker:
         self.cooldown_seconds = cooldown_seconds
         self._state: dict[str, dict[str, float | str | int]] = {}
         self._lock = Lock()
+
+    # --- day-2 spec property names (read-only aliases) ---
+
+    @property
+    def failure_threshold(self) -> int:
+        """Alias for `fail_threshold` (day-2 spec name)."""
+        return self.fail_threshold
+
+    @property
+    def reset_timeout_ms(self) -> int:
+        """Alias for `cooldown_seconds` in milliseconds (day-2 spec name)."""
+        return int(self.cooldown_seconds * 1000)
 
     def _slot(self, tool_name: str) -> dict[str, float | str | int]:
         return self._state.setdefault(

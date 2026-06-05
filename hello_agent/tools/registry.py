@@ -3,15 +3,22 @@
 Borrowed from `NousResearch/hermes-agent/tools/registry.py` with:
 - Added `dangerous` flag for confirmation-gated tools
 - Added per-session confirmation cache
+- Added `unregister()`, `list()` (alias for `list_all()`), and
+  `filter_by_profile()` for dynamic per-agent toolset shaping.
+- Added `auto_discover` opt-in to `__init__` so a freshly-built
+  `ToolRegistry` can populate itself with builtin tools in one line.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from hello_agent.core.exceptions import ToolNotFoundError
 from hello_agent.core.types import ToolDefinition, ToolResult
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,14 +33,37 @@ class _RegisteredTool:
 
 
 class ToolRegistry:
-    """Holds all registered tools, supports enable/disable, and dispatches calls."""
+    """Holds all registered tools, supports enable/disable, and dispatches calls.
 
-    def __init__(self) -> None:
+    If `auto_discover=True` is passed to `__init__`, all builtin tools are
+    registered as a side effect of constructing the registry. This is opt-in
+    (off by default for the shared `registry` singleton to keep import order
+    predictable; on by default in CLI/server bootstrap paths).
+    """
+
+    def __init__(self, *, auto_discover: bool = False) -> None:
         self._tools: dict[str, _RegisteredTool] = {}
         self._toolsets: dict[str, list[str]] = {}
         self._enabled: set[str] = set()
         self._disabled: set[str] = set()  # explicit disables override default-enabled
         self._confirmation_cache: dict[str, set[str]] = {}
+        self._auto_discover_done: bool = False
+        if auto_discover:
+            self.auto_discover()
+
+    def auto_discover(self) -> None:
+        """Register all builtin tools into this registry. Idempotent."""
+        if self._auto_discover_done:
+            return
+        try:
+            from hello_agent.tools.builtin._register import register_all
+        except Exception as exc:  # noqa: BLE001 — best-effort discovery
+            # Builtins might not be importable in minimal test envs. Don't crash.
+            _logger.debug("builtin auto-discover failed: %s", exc)
+            self._auto_discover_done = True
+            return
+        register_all(self)
+        self._auto_discover_done = True
 
     # --- registration ---
 
@@ -87,6 +117,30 @@ class ToolRegistry:
         self._toolsets.setdefault(toolset, []).append(name)
         self._enabled.add(name)
 
+    def unregister(self, name: str) -> bool:
+        """Remove a tool from the registry. Returns True if it existed.
+
+        Idempotent: re-unregistering a missing tool is a no-op (returns False).
+        Also drops the tool from its toolset list and clears any per-session
+        confirmation entries for it.
+        """
+        if name not in self._tools:
+            return False
+        entry = self._tools.pop(name)
+        # Drop from toolset membership
+        bucket = self._toolsets.get(entry.toolset)
+        if bucket is not None:
+            try:
+                bucket.remove(name)
+            except ValueError:
+                pass
+        self._enabled.discard(name)
+        self._disabled.discard(name)
+        # Drop any per-session confirmations
+        for cache in self._confirmation_cache.values():
+            cache.discard(name)
+        return True
+
     def register_toolset(
         self,
         name: str,
@@ -128,12 +182,53 @@ class ToolRegistry:
     def list_all(self) -> list[_RegisteredTool]:
         return list(self._tools.values())
 
+    # `list()` is the day-2 spec name; `list_all()` kept for back-compat.
+    list = list_all  # type: ignore[assignment]
+
     def list_tool_definitions(self, enabled_only: bool = True) -> list[ToolDefinition]:
         out: list[ToolDefinition] = []
         for name, t in self._tools.items():
             if enabled_only and not self.is_enabled(name):
                 continue
             out.append(t.schema)
+        return out
+
+    def filter_by_profile(
+        self,
+        profile: str,
+        *,
+        enabled_only: bool = False,
+    ) -> list[_RegisteredTool]:
+        """Return the tools registered under the given toolset/profile name.
+
+        Resolution order:
+          1. If `profile` matches a registered toolset (e.g. "default", "react"),
+             return those tools in the order they were registered.
+          2. Otherwise, return every tool whose `toolset` field matches `profile`.
+          3. If nothing matches, return an empty list (never raises).
+
+        `enabled_only=True` further filters out disabled tools. This is the
+        per-agent filter used by the CLI / runtime when a profile like
+        `default` / `react` / `plan_solve` is selected.
+        """
+        members: list[str] = []
+        if profile in self._toolsets:
+            members = list(self._toolsets[profile])
+        else:
+            for t in self._tools.values():
+                if t.toolset == profile:
+                    members.append(t.name)
+        out: list[_RegisteredTool] = []
+        seen: set[str] = set()
+        for n in members:
+            if n in seen:
+                continue
+            if n not in self._tools:
+                continue
+            if enabled_only and not self.is_enabled(n):
+                continue
+            out.append(self._tools[n])
+            seen.add(n)
         return out
 
     def get(self, name: str) -> _RegisteredTool:
