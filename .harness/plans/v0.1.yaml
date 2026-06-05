@@ -1,147 +1,641 @@
-plan: hello-agent-2-v0.1
-title: "hello-agent-2 · v0.1 (5-day backbone, Hermetic agent loop)"
-owner: peckerpro
-createdBy: mavis-root
+version: 1
 
+plan:
+  name: "hello-agent-2 · v0.1 (5-day backbone)"
+  max_concurrency: 1
+  max_consecutive_failures: 2
+  max_cycles: 12
+  auto_accept: false
+  auto_reject_retries: 1
+  verifier_config:
+    default_verifiers:
+      - verifier
+    audit_sample_rate: 0
+    strict_mode: false
+
+# Global context for every task. The producer MUST read ENGINEERING.md
+# before writing any code. The verifier MUST read it before grading.
 context:
   workspace: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08
-  reins_root: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.harness\reins
   eng_doc: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\docs\ENGINEERING.md
+  reins_root: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.harness\reins
   github_remote: https://github.com/peckerpro/minimax-agent-try-1.git
+  branch: wt/e5bdcb08
   user_policies:
     - "Tight feedback loops: smoke after each module, not at the end"
     - "Author → reviewer → fix → push runs without user check-in"
     - "User does not review until a milestone (v0.1) is done"
     - "Exact-pinned deps; PLW1514 enforcement; no LangChain"
+    - "ENGINEERING.md is the single source of truth; deviations must be surfaced to the user, not silently made"
 
 tasks:
   - id: day1-scaffold
-    title: "Day 1 — uv sync + core/ + minimal cli chat"
-    agent: backend-coder
-    inputs:
-      eng_doc_sections: [3, 4, 6]
-    deliverable:
-      - pyproject.toml (already laid down — verify)
-      - uv sync runs clean
-      - hello_agent/core/{config,llm,types,logging,paths,exceptions}.py
-      - hello_agent/agents/base.py + simple.py
-      - hello_agent/cli/main.py + chat.py
-      - scripts/smoke_core.py + scripts/smoke_cli.py
-    smoke: |
-      cd $WORKSPACE
-      uv sync
-      uv run ruff check hello_agent/
-      uv run python scripts/smoke_core.py
-      uv run python scripts/smoke_cli.py --prompt "hello"
-    verify:
-      tester:
-        - uv run pytest tests/test_core/ -q
-        - uv run pytest tests/test_agents/ -q
-      reviewer:
-        - PLW1514 sweep
-        - exact-pinned deps
-        - §3 tree match
-    on_pass: commit_and_push
-    on_fail: coder_fix_loop
+    title: "Day 1 — uv sync + hello_agent/core/ + SimpleAgent + CLI chat"
+    assigned_to: coder
+    role: produce
+    verified_by: verifier
+    depends_on: []
+    gates: []
+    max_retries: 2
+    timeout_ms: 1800000
+    hang_alert_after_ms: 1500000
+    prompt: |
+      You are the **producer** for Day 1 of the hello-agent-2 v0.1 backbone plan.
+
+      ## Source of truth (READ FIRST)
+      `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\docs\ENGINEERING.md`
+      is the canonical engineering brief. **The brief wins over any other
+      doc.** The repo already has `pyproject.toml` (exact-pinned deps, §4.1),
+      `.env.example` (§4.2), `config.yaml` (§4.3), `.gitignore` (§4.4),
+      `.python-version` (§4.5), `LICENSE`, `README.md`, plus
+      `hello_agent/__init__.py` + `hello_agent/__main__.py` + `hello_agent/core/__init__.py` skeleton.
+
+      ## Working directory
+      All paths below are relative to the worktree root
+      `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`.
+      Do not write outside this tree.
+
+      ## What to build (Day 1)
+
+      ### A. `hello_agent/core/` — foundational abstractions
+      Per ENGINEERING.md §6.1 + §6.2:
+      - `core/config.py` — pydantic-settings loader for config.yaml + .env
+        (use `HELLO_AGENT_HOME`, `HELLO_AGENT_PROFILE` env). MUST honor
+        profile-aware paths.
+      - `core/llm.py` — thin OpenAI-compatible client (sync + async +
+        streaming). Honors `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` /
+        `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` from env or config.yaml.
+        Use `tenacity` for retries; raise `LLMError` on hard failure.
+      - `core/types.py` — `Message`, `ToolCall`, `ToolResult`, `AgentState`,
+        `ToolResponse` dataclasses (see §6.2 types.py).
+      - `core/logging.py` — `loguru` setup, profile-aware paths, 3 files
+        (agent / tools / llm) per `logging.files` in config.yaml.
+      - `core/paths.py` — `get_hello_agent_home()` (defaults to
+        `~/.hello-agent`, honors `HELLO_AGENT_HOME` and `HELLO_AGENT_PROFILE`).
+        **CRITICAL: `hello_agent/__init__.py` already calls
+        `core.paths._apply_profile_override()` at import time — implement
+        that function so the import works.**
+      - `core/exceptions.py` — `HelloAgentError` hierarchy (`LLMError`,
+        `ToolError`, `ConfigError`, `MemoryError`, `RAGError`).
+
+      ### B. `hello_agent/agents/` — first agent
+      Per §6.3:
+      - `agents/base.py` — `Agent` ABC + `AgentState` dataclass.
+      - `agents/simple.py` — `SimpleAgent` (single-shot LLM call, no tools).
+        Constructor takes `llm: LLMClient`, optional `system_prompt`.
+
+      ### C. `hello_agent/cli/` — minimal CLI
+      Per §6.12:
+      - `cli/main.py` — `main()` entry, `argparse`-based subcommands.
+        Subcommands: `chat`, `run`, `version`, `doctor`.
+      - `cli/chat.py` — interactive REPL using `prompt_toolkit`. No tools
+        (just SimpleAgent loop). Output via `rich`.
+      - `cli/run.py` — single-turn, prints reply + exits. (Day 3 expands this.)
+
+      ### D. `scripts/` — smoke tests
+      - `scripts/smoke_core.py` — instantiate `LLMClient` from
+        `config.yaml`, run a 1-token probe (`max_tokens=1`), assert no
+        crash. Skip silently if `LLM_API_KEY` not set (CI mode).
+      - `scripts/smoke_cli.py` — run `hello-agent chat "ping"` via
+        `subprocess`, assert exit 0 and "pong"-ish in stdout.
+        Accepts `--prompt` override.
+
+      ### E. `tests/` — pytest scaffolding
+      - `tests/__init__.py` (empty), `tests/conftest.py` (sets
+        `HELLO_AGENT_PROFILE=test`, tmp HOME).
+      - `tests/test_core/test_paths.py` — covers `get_hello_agent_home`
+        with / without env override.
+      - `tests/test_core/test_config.py` — load default config.yaml,
+        assert no exceptions.
+      - `tests/test_agents/test_simple.py` — mock LLMClient, assert
+        SimpleAgent returns the mock's text.
+      - (Optional) `tests/test_cli/test_version.py` — assert
+        `hello-agent --version` returns 0.
+
+      ## Workflow rules (user policies)
+
+      1. **Smoke after each file, not at the end.** After writing any
+         Python file in `hello_agent/`, run `uv run python -c "import
+         hello_agent.X"` to make sure the import chain still works.
+      2. **Use PowerShell, not bash heredoc.** `mkdir` / `New-Item`,
+         `cat` / `Get-Content`, `rm` / `Remove-Item`. The user is on Windows.
+      3. **Do not modify `pyproject.toml` dependencies** — they are
+         already exact-pinned and locked. Adding a new dep needs user OK.
+      4. **PLW1514 must be honored** — every `open()` call passes
+         `encoding="utf-8"` explicitly.
+      5. **No LangChain / LlamaIndex** — use stdlib + the listed deps only.
+      6. **Day 1 does NOT include tools, context, memory, RAG, web UI,
+         windows tray, MCP** — those are day 2-5. Don't expand scope.
+      7. **Run ruff before commit:**
+         `uv run ruff check hello_agent/ scripts/ tests/`
+      8. **Commit & push at the end of Day 1**:
+         ```
+         git add -A
+         git commit -m "feat(day1): core abstractions + SimpleAgent + CLI chat scaffold"
+         git push origin wt/e5bdcb08
+         ```
+         Push goes through proxy; if it fails 3 times in a row, STOP and
+         report the error to the verifier (don't burn retries — the
+         monitor cron will pick it up).
+
+      ## Deliverable
+      1. All files listed in §A / §B / §C / §D / §E above exist and
+         import cleanly.
+      2. `uv run ruff check hello_agent/ scripts/ tests/` passes.
+      3. `uv run python scripts/smoke_core.py` exits 0 (or skips cleanly
+         if no API key).
+      4. `uv run python scripts/smoke_cli.py --prompt "ping"` exits 0.
+      5. `uv run pytest tests/test_core/ tests/test_agents/ -q` passes.
+      6. `git log -1` shows the new day-1 commit on `wt/e5bdcb08`.
+      7. `git log origin/wt/e5bdcb08..HEAD` is empty (push succeeded).
+
+      Write a final report to
+      `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.mavis\plans\day1-scaffold-deliverable.md`
+      listing: files created, smoke test outputs, pytest summary, the
+      commit SHA, and any deviation from the spec.
+    verify_prompt: |
+      You are the **verifier** for Day 1 of hello-agent-2 v0.1.
+
+      **Do NOT trust the producer's report. Re-run everything.**
+
+      ## Working directory
+      `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`
+
+      ## Verification checklist (all 12 must pass for PASS)
+
+      1. **File existence** — every file in
+         `core/{config,llm,types,logging,paths,exceptions}.py` +
+         `agents/{base,simple}.py` + `cli/{main,chat,run}.py` +
+         `scripts/{smoke_core,smoke_cli}.py` exists. Use
+         `Get-ChildItem` not bash glob.
+
+      2. **No scope creep** — `hello_agent/` does NOT yet contain
+         `tools/`, `context/`, `memory/`, `rag/`, `protocols/`,
+         `observability/`, `skills/`, `windows/`, `web/`. (Those are day 2+.)
+
+      3. **Skeleton still imports** — `uv run python -c "import hello_agent"`
+         exits 0. (The package's `__init__.py` calls
+         `core.paths._apply_profile_override` — if that function is
+         missing, this import fails. That alone is a FAIL.)
+
+      4. **Core imports** — `uv run python -c "from hello_agent.core import config, llm, types, logging, paths, exceptions"` exits 0.
+
+      5. **Agent imports** — `uv run python -c "from hello_agent.agents.base import Agent; from hello_agent.agents.simple import SimpleAgent"` exits 0.
+
+      6. **CLI imports** — `uv run python -c "from hello_agent.cli.main import main; from hello_agent.cli.chat import chat; from hello_agent.cli.run import run"` exits 0.
+
+      7. **CLI runs** — `uv run hello-agent --version` exits 0 and prints
+         `hello-agent 0.1.0`.
+
+      8. **Smoke core** — `uv run python scripts/smoke_core.py` exits 0
+         (or prints a clear "no LLM_API_KEY, skipping" line and still
+         exits 0). Anything else is FAIL.
+
+      9. **Smoke CLI** — `uv run python scripts/smoke_cli.py --prompt "ping"`
+         exits 0.
+
+      10. **Ruff clean** — `uv run ruff check hello_agent/ scripts/ tests/`
+          exits 0. Any PLW1514 violation in `hello_agent/` is auto-FAIL
+          (tests/ can ignore per pyproject.toml).
+
+      11. **Pytest passes** — `uv run pytest tests/test_core/ tests/test_agents/ -q`
+          exits 0. At least 4 distinct test cases (one per
+          `test_core/test_paths.py`, `test_core/test_config.py`,
+          `test_agents/test_simple.py`, plus whatever the producer added).
+
+      12. **Git state** —
+          - `git log -1 --format='%H %s'` shows a day-1 commit.
+          - `git log origin/wt/e5bdcb08..HEAD` is **empty** (push succeeded).
+          - `git diff --stat HEAD~1` covers exactly the day-1 files
+            (no `hello_agent/tools/`, no `hello_agent/memory/`, etc.).
+
+      ## Failure handling
+      If ANY item above fails, return **VERDICT: FAIL** with:
+      - Which item(s) failed
+      - Exact error output (last 30 lines)
+      - Suggested fix (1-2 sentences)
+
+      Otherwise return **VERDICT: PASS** with a 5-line summary of
+      file count, ruff result, pytest result, commit SHA, and any
+      spec deviations the producer flagged.
 
   - id: day2-tooling
-    title: "Day 2 — Tool registry + builtin document parser + file tools"
-    agent: backend-coder
-    depends_on: [day1-scaffold]
-    inputs:
-      eng_doc_sections: [6, 7.1]
-    deliverable:
-      - hello_agent/tools/{base,registry,response,circuit_breaker,permission}.py
-      - hello_agent/tools/builtin/{document_parser,file_tools,shell_tool}.py
-      - scripts/smoke_tools.py
-    smoke: |
-      uv run python scripts/smoke_tools.py
-    verify:
-      tester:
-        - uv run pytest tests/test_tools/ -q
-      reviewer:
-        - ToolResponse shape consistency
-        - MinerU→markitdown fallback chain correctness
+    title: "Day 2 — Tool registry + builtin document_parser / file_tools / shell_tool + smoke"
+    assigned_to: coder
+    role: produce
+    verified_by: verifier
+    depends_on:
+      - day1-scaffold
+    gates: []
+    max_retries: 2
+    timeout_ms: 1800000
+    hang_alert_after_ms: 1500000
+    prompt: |
+      You are the producer for **Day 2** of the hello-agent-2 v0.1 plan.
+      Day 1 is done; core + SimpleAgent + CLI chat exist on
+      `wt/e5bdcb08`. Read
+      `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\docs\ENGINEERING.md`
+      §6.4 (tools) + §7.1 (MinerU + markitdown) BEFORE coding.
 
-  - id: day2-review
-    title: "Day 2 — review day1+day2 → fix → push"
-    agent: reviewer
-    depends_on: [day2-tooling]
-    on_pass: commit_and_push
+      ## What to build
+
+      ### A. `hello_agent/tools/` — tool system
+      Per §6.4:
+      - `base.py` — `Tool` ABC, `@tool` decorator, schema-from-signature
+        (use `inspect.signature` + `typing.get_type_hints`, emit JSON Schema
+        for the LLM).
+      - `registry.py` — `ToolRegistry` with `register()`, `unregister()`,
+        `get()`, `list()`, `filter_by_profile(profile)`. Auto-discover
+        builtins on `__init__` if `auto_discover=True`.
+      - `response.py` — `ToolResponse` dataclass: `{success, data, error, hint}`.
+      - `circuit_breaker.py` — `CircuitBreaker` (closed → open → half-open)
+        with `failure_threshold`, `reset_timeout_ms`.
+      - `permission.py` — `PermissionGate` with allowlist + per-session
+        confirmation for `require_confirmation` tools (see
+        `config.yaml tools.require_confirmation`).
+
+      ### B. `hello_agent/tools/builtin/` — at least these 3 (Day 2 scope)
+      - `document_parser.py` — MinerU 2.5 Pro → markitdown → plain text
+        fallback chain. Reads `MINERU_API_KEY` / `MINERU_BASE_URL` /
+        `MINERU_MODEL` from env. If no MinerU key, fall back to
+        markitdown. If neither installed, return text error with hint.
+        Accepts file path → returns markdown string.
+      - `file_tools.py` — `read_file(path)`, `write_file(path, content)`,
+        `edit_file(path, old, new)`. Use `encoding="utf-8"` on every
+        `open()`. `write_file` / `edit_file` are in
+        `tools.require_confirmation`.
+      - `shell_tool.py` — `run_powershell(cmd)`, `run_cmd(cmd)`. Default
+        timeout 60s, max output 50000 bytes (from config.yaml
+        `terminal.shell_*`). Both in `require_confirmation`.
+
+      ### C. `scripts/smoke_tools.py`
+      - Smoke `ToolRegistry.register` / `get` / `list` round-trip.
+      - Smoke `ToolResponse` shape (`success=True` path).
+      - Smoke `CircuitBreaker` state transitions (mock tool that fails
+        N times, then assert OPEN).
+      - Smoke `document_parser` on a tiny inline markdown string (no
+        real file I/O — just the fallback chain when MinerU is
+        unavailable).
+      - Smoke `file_tools.read_file` / `write_file` round-trip on a
+        temp file.
+      - Smoke `shell_tool.run_cmd "echo hello"` — assert stdout
+        contains "hello".
+
+      ### D. `tests/test_tools/`
+      - `test_registry.py` — register / get / list / unregister.
+      - `test_circuit_breaker.py` — state transitions.
+      - `test_response.py` — ToolResponse serialization.
+      - `test_file_tools.py` — round-trip read/write (uses tmp dir).
+      - `test_shell_tool.py` — echo smoke.
+
+      ## Workflow rules
+      Same as Day 1 (PowerShell, ruff, smoke-after-each-file, no
+      pyproject.toml dep changes without OK).
+
+      ## Commit & push
+      ```
+      git add -A
+      git commit -m "feat(day2): tool registry + circuit breaker + builtin document/file/shell tools"
+      git push origin wt/e5bdcb08
+      ```
+
+      ## Deliverable
+      1. All files in §A / §B / §C / §D exist + import cleanly.
+      2. `uv run ruff check hello_agent/ scripts/ tests/` passes.
+      3. `uv run python scripts/smoke_tools.py` exits 0.
+      4. `uv run pytest tests/test_tools/ -q` passes (≥5 tests).
+      5. New commit on `wt/e5bdcb08`, pushed to origin.
+      6. Final report at
+         `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.mavis\plans\day2-tooling-deliverable.md`.
+    verify_prompt: |
+      You are the verifier for **Day 2** of hello-agent-2 v0.1.
+
+      Working dir: `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`
+
+      ## Re-verify (don't trust producer)
+
+      1. **All §A / §B files exist** — `tools/{base,registry,response,circuit_breaker,permission}.py`
+         + `tools/builtin/{document_parser,file_tools,shell_tool}.py` + `__init__.py` for both.
+      2. **No scope creep** — `agents/`, `context/`, `memory/`, `rag/`,
+         `protocols/`, `web/`, `windows/` still don't exist (those are day 3+).
+      3. **Imports** — `uv run python -c "from hello_agent.tools import registry, base, response, circuit_breaker, permission; from hello_agent.tools.builtin import document_parser, file_tools, shell_tool"` exits 0.
+      4. **Smoke** — `uv run python scripts/smoke_tools.py` exits 0.
+      5. **Ruff clean** — `uv run ruff check hello_agent/ scripts/ tests/` exits 0.
+      6. **Pytest** — `uv run pytest tests/test_tools/ -q` exits 0 with ≥5 tests collected.
+      7. **Git** — new day-2 commit on `wt/e5bdcb08`, pushed to origin (no ahead-commits).
+      8. **Day 1 still green** — re-run `uv run pytest tests/test_core/ tests/test_agents/ -q` to confirm Day 1 wasn't broken.
+      9. **Permission wiring** — `file_tools.write_file`, `file_tools.edit_file`,
+         `shell_tool.run_powershell`, `shell_tool.run_cmd` are in
+         `tools.require_confirmation` per `config.yaml`.
+
+      PASS = all 9 green. FAIL = list exactly which item(s) broke with
+      error output.
 
   - id: day3-react-loop
-    title: "Day 3 — ReAct agent loop + router + CLI run"
-    agent: backend-coder
-    depends_on: [day2-review]
-    inputs:
-      eng_doc_sections: [6, 7.2]
-    deliverable:
-      - hello_agent/agents/{react,plan_solve,reflection,router}.py
-      - hello_agent/cli/run.py
-    smoke: |
-      uv run python scripts/smoke_agents.py
-      uv run hello-agent run "what is 2+2"
-    verify:
-      tester: uv run pytest tests/test_agents/ -q
-      reviewer: Hermes borrowing map §5 alignment
+    title: "Day 3 — ReAct / PlanAndSolve / Reflection agents + TaskRouter + CLI run + smoke"
+    assigned_to: coder
+    role: produce
+    verified_by: verifier
+    depends_on:
+      - day2-tooling
+    gates: []
+    max_retries: 2
+    timeout_ms: 1800000
+    hang_alert_after_ms: 1500000
+    prompt: |
+      You are the producer for **Day 3** of hello-agent-2 v0.1.
 
-  - id: day3-review
-    title: "Day 3 — review day3 → fix → push"
-    agent: reviewer
-    depends_on: [day3-react-loop]
-    on_pass: commit_and_push
+      Read ENGINEERING.md §6.3 (agents) + §7.2 (advanced RAG
+      retrieval — defer; only borrow the LLM-call pattern). Day 1-2
+      already shipped: `core/`, `SimpleAgent`, `tools/` with
+      registry + 3 builtins.
+
+      ## What to build
+
+      ### A. `hello_agent/agents/` — extend
+      Per §6.3:
+      - `react.py` — `ReActAgent` (DEFAULT agent type per
+        `config.yaml agent.default_type: react`). Reasoning + acting
+        loop. Up to `max_iterations` (30) tool calls per turn. Respects
+        `PermissionGate` + `CircuitBreaker`. Stops on `final_answer` tool
+        call or iteration cap.
+      - `plan_solve.py` — `PlanAndSolveAgent`. First call LLM to plan
+        (list of subtasks), then execute each in order.
+      - `reflection.py` — `ReflectionAgent`. Execute → reflect → iterate
+        up to N times.
+      - `router.py` — `TaskRouter`. Classifies a user prompt (zero-shot
+        via LLM) into one of {simple, react, plan_solve, reflection}
+        and dispatches.
+
+      ### B. `hello_agent/cli/run.py` — expand
+      Add `--agent-type` flag (one of `simple|react|plan_solve|reflection`,
+      default `react`). Without `--agent-type`, the router picks.
+
+      ### C. `scripts/smoke_agents.py`
+      - Smoke `SimpleAgent` with a mock LLM that returns a fixed string.
+      - Smoke `ReActAgent` with a stubbed `ToolRegistry` containing a
+        fake `final_answer` tool. Assert loop terminates.
+      - Smoke `TaskRouter` with a mock LLM that returns "react" →
+        assert dispatched agent type.
+
+      ### D. `tests/test_agents/`
+      - Extend `test_simple.py` with iteration loop test.
+      - Add `test_react.py` — mock LLM that emits a tool_call then a
+        final answer; assert ReActAgent terminates at 2 iterations.
+      - Add `test_router.py` — mock LLM returns "react"; assert dispatch.
+
+      ## Workflow
+      Same as Day 1-2.
+
+      ## Commit & push
+      ```
+      git add -A
+      git commit -m "feat(day3): ReAct / PlanAndSolve / Reflection agents + TaskRouter + CLI run expansion"
+      git push origin wt/e5bdcb08
+      ```
+
+      ## Deliverable
+      1. All §A / §B / §C / §D files exist + import cleanly.
+      2. `uv run ruff check hello_agent/ scripts/ tests/` passes.
+      3. `uv run python scripts/smoke_agents.py` exits 0.
+      4. `uv run hello-agent run --agent-type react "what is 2+2"` exits 0
+         (allow non-zero if no API key, with a clear "no LLM_API_KEY,
+         skipping" message; do NOT crash).
+      5. `uv run pytest tests/test_agents/ -q` passes.
+      6. Day 1-2 still green (re-run their test suites).
+      7. New commit on `wt/e5bdcb08`, pushed to origin.
+      8. Final report at
+         `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.mavis\plans\day3-react-loop-deliverable.md`.
+    verify_prompt: |
+      Verifier for **Day 3** of hello-agent-2 v0.1.
+
+      Working dir: `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`
+
+      ## Re-verify
+
+      1. **All §A / §B files** — `agents/{react,plan_solve,reflection,router}.py`
+         exist with non-empty content. `cli/run.py` is updated.
+      2. **No scope creep** — `context/`, `memory/`, `rag/` still don't
+         exist (day 4-5).
+      3. **Imports** — `uv run python -c "from hello_agent.agents.react import ReActAgent; from hello_agent.agents.plan_solve import PlanAndSolveAgent; from hello_agent.agents.reflection import ReflectionAgent; from hello_agent.agents.router import TaskRouter"` exits 0.
+      4. **Smoke** — `uv run python scripts/smoke_agents.py` exits 0.
+      5. **CLI** — `uv run hello-agent run --agent-type simple "ping"`
+         exits 0 (with or without API key — must not crash).
+      6. **Ruff** — `uv run ruff check hello_agent/ scripts/ tests/` exits 0.
+      7. **Pytest** — `uv run pytest tests/test_agents/ -q` exits 0.
+         ≥3 distinct test files (test_simple, test_react, test_router).
+      8. **Day 1-2 still green** — re-run all previous pytest suites.
+      9. **Git** — new day-3 commit, pushed to origin.
+      10. **Hermes borrowing map (§5) alignment** — spot-check that
+          `react.py` borrows from hermes-agent's `react_agent.py`
+          patterns (state machine, iteration cap, final_answer tool).
+          Read the §5 map and confirm at least 2 borrowings are present.
+          If hermes-agent is not cloned locally, just confirm the file
+          shape matches §6.3 description (no need to clone).
+
+      PASS = all 10 green. FAIL = exact failed items + output.
 
   - id: day4-context-mem
-    title: "Day 4 — Context engineering + Memory (short/long/episodic)"
-    agent: backend-coder
-    depends_on: [day3-review]
-    inputs:
-      eng_doc_sections: [6, 7.3]
-    deliverable:
-      - hello_agent/context/{history,token_counter,truncator,builder}.py
-      - hello_agent/memory/{short_term,long_term,episodic}.py
-      - scripts/smoke_context.py
-    smoke: uv run python scripts/smoke_context.py
-    verify:
-      tester: uv run pytest tests/test_context/ tests/test_memory/ -q
-      reviewer: ContextBuilder assembles all 5 sources correctly
+    title: "Day 4 — Context engineering (history/token_counter/truncator/builder) + Memory (short/long/episodic) + smoke"
+    assigned_to: coder
+    role: produce
+    verified_by: verifier
+    depends_on:
+      - day3-react-loop
+    gates: []
+    max_retries: 2
+    timeout_ms: 1800000
+    hang_alert_after_ms: 1500000
+    prompt: |
+      You are the producer for **Day 4** of hello-agent-2 v0.1.
 
-  - id: day4-review
-    title: "Day 4 — review day4 → fix → push"
-    agent: reviewer
-    depends_on: [day4-context-mem]
-    on_pass: commit_and_push
+      Read ENGINEERING.md §6.5 (context) + §6.6 (memory) + §7.3
+      (Obsidian sync — defer the actual sync, but design the schema).
 
-  - id: day5-rag-obsidian
-    title: "Day 5 — RAG (chromadb 4 strategies) + Obsidian sync"
-    agent: backend-coder
-    depends_on: [day4-review]
-    inputs:
-      eng_doc_sections: [6, 7.4, 7.5]
-    deliverable:
-      - hello_agent/rag/{loader,chunker,embedder,vector_store,retrieval,index_cli}.py
-      - hello_agent/memory/{obsidian_sync,git_sync}.py
-      - scripts/smoke_rag.py
-    smoke: |
-      uv run python scripts/smoke_rag.py
-      uv run hello-agent rag index docs/
-      uv run hello-agent rag query "What is ReAct?"
-    verify:
-      tester: uv run pytest tests/test_rag/ -q
-      reviewer: 4-strategy ensemble weights sum to 1.0
+      ## What to build
 
-  - id: day5-review
-    title: "Day 5 — final review → fix → tag v0.1 → push"
-    agent: reviewer
-    depends_on: [day5-rag-obsidian]
-    on_pass: commit_tag_and_push_v0.1
-    notify_user: true
+      ### A. `hello_agent/context/` — context engineering
+      Per §6.5:
+      - `history.py` — `HistoryManager` (sliding window,
+        `max_messages=50` from config.yaml `memory.short_term.max_messages`).
+        Supports per-message flags (compressed, truncated, system, tool).
+      - `token_counter.py` — `tiktoken` based counter. Falls back to a
+        char/4 heuristic if tiktoken missing.
+      - `truncator.py` — `ObservationTruncator` with strategies
+        `head_tail` (default), `middle_out`, `summarize`.
+      - `builder.py` — `ContextBuilder` that assembles system + history
+        + RAG chunks + memory recall into a single messages list. Honors
+        `context.max_context_tokens=128000` and
+        `context.response_reserve_tokens=4000`.
 
-settings:
-  push_retries: 10
-  push_retry_delay_seconds: 5
-  default_timeout_minutes: 60
-  test_suite_timeout_minutes: 10
-  notify_on_each_milestone: true
-  notify_user_only_on:
-    - on_pass: commit_tag_and_push_v0.1
+      ### B. `hello_agent/memory/` — memory subsystem
+      Per §6.6:
+      - `short_term.py` — wraps `HistoryManager`. (Could just re-export.)
+      - `long_term.py` — SQLite-backed facts (user prefs, project
+        context). Path: `~/.hello-agent/memory/long_term.db` (per
+        config.yaml). Schema: `facts(id, key, value, source, created_at, updated_at)`.
+        Use stdlib `sqlite3`, no ORM.
+      - `episodic.py` — past task summaries. Schema:
+        `episodes(id, session_id, summary, created_at)`. `summarize_every_n_turns=20`.
+
+      ### C. `scripts/smoke_context.py`
+      - Smoke `TokenCounter` (mock a Message, count tokens).
+      - Smoke `HistoryManager` sliding window (push 60 messages,
+        assert len == 50).
+      - Smoke `Truncator.head_tail` (truncate a 1000-line string).
+      - Smoke `ContextBuilder` end-to-end (with all features disabled
+        in config, should just return system + history).
+
+      ### D. `tests/test_context/` + `tests/test_memory/`
+      - `test_history.py`, `test_token_counter.py`, `test_truncator.py`,
+        `test_builder.py`.
+      - `test_long_term.py` — set/get round-trip on a tmp db.
+      - `test_episodic.py` — insert + query round-trip.
+
+      ## Workflow
+      Same as Day 1-3.
+
+      ## Commit & push
+      ```
+      git add -A
+      git commit -m "feat(day4): context engineering + short/long/episodic memory"
+      git push origin wt/e5bdcb08
+      ```
+
+      ## Deliverable
+      1. All §A / §B / §C / §D files exist + import cleanly.
+      2. Ruff clean.
+      3. `uv run python scripts/smoke_context.py` exits 0.
+      4. Pytest for `tests/test_context/ tests/test_memory/ -q` passes.
+      5. Day 1-3 still green.
+      6. New commit on `wt/e5bdcb08`, pushed to origin.
+      7. Final report at
+         `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.mavis\plans\day4-context-mem-deliverable.md`.
+    verify_prompt: |
+      Verifier for **Day 4**.
+
+      Working dir: `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`
+
+      ## Re-verify
+
+      1. **All §A / §B files** exist with non-empty content.
+      2. **No `rag/` yet** (day 5).
+      3. **Imports** — `uv run python -c "from hello_agent.context import history, token_counter, truncator, builder; from hello_agent.memory import short_term, long_term, episodic"` exits 0.
+      4. **Smoke** — `uv run python scripts/smoke_context.py` exits 0.
+      5. **Ruff** — `uv run ruff check hello_agent/ scripts/ tests/` exits 0.
+      6. **Pytest** — `uv run pytest tests/test_context/ tests/test_memory/ -q` exits 0.
+         ≥6 distinct test files.
+      7. **SQLite db** — `long_term.py` actually creates a sqlite file at
+         the expected path when called (use a tmp HOME).
+      8. **ContextBuilder wiring** — `builder.py` reads
+         `config.yaml context.*` keys (you can confirm by inspection
+         of the code: must use `Config().context.max_context_tokens`,
+         not hardcoded).
+      9. **Day 1-3 still green** — re-run all prior pytest suites.
+      10. **Git** — new day-4 commit, pushed to origin.
+
+      PASS = all 10. FAIL = exact items + output.
+
+  - id: day5-final
+    title: "Day 5 — RAG (chromadb 4 strategies) + Obsidian/Git sync scaffolds + final review + tag v0.1"
+    assigned_to: coder
+    role: produce
+    verified_by: verifier
+    depends_on:
+      - day4-context-mem
+    gates: []
+    max_retries: 2
+    timeout_ms: 1800000
+    hang_alert_after_ms: 1500000
+    prompt: |
+      You are the producer for **Day 5** — the final day — of
+      hello-agent-2 v0.1. After this lands, the plan is complete and
+      we tag v0.1.
+
+      Read ENGINEERING.md §6.7 (RAG) + §6.6 (Obsidian sync) + §7.4
+      (RAG strategies) + §7.5 (Obsidian).
+
+      ## What to build
+
+      ### A. `hello_agent/rag/` — RAG subsystem
+      Per §6.7:
+      - `loader.py` — file loader honoring `rag.loader.extensions` from
+        config.yaml. For PDFs, dispatch to `document_parser`.
+      - `chunker.py` — sliding window chunker,
+        `chunk_size_tokens=512`, `chunk_overlap_tokens=64`.
+      - `embedder.py` — OpenAI embeddings (`EMBEDDING_MODEL` from env)
+        with `local` provider fallback (deferred if not installed).
+      - `vector_store.py` — chromadb wrapper around
+        `CHROMADB_PERSIST_DIR`.
+      - `retrieval.py` — 4 strategies (`rewrite`, `hyde`,
+        `multi_query`, `rerank`) + RRF ensemble. Per config.yaml,
+        weights are `0.4 / 0.2 / 0.2 / 0.2` (sum=1.0).
+      - `index_cli.py` — `hello-agent rag index <path>` /
+        `hello-agent rag query "<text>"` commands.
+
+      ### B. `hello_agent/memory/obsidian_sync.py` + `git_sync.py` — scaffolds
+      Per §6.6 + §7.5:
+      - `obsidian_sync.py` — markdown frontmatter serializer for
+        episodic memory → vault. Use `python-frontmatter`. If
+        `OBSIDIAN_VAULT_PATH` empty, no-op with a log line.
+      - `git_sync.py` — background thread that auto-commits the vault
+        on `obsidian.auto_commit_interval_minutes` and pushes on
+        `obsidian.auto_push_interval_minutes`. If `OBSIDIAN_GIT_TOKEN`
+        empty, no-op. **Don't run the thread in tests / smoke.**
+
+      ### C. `scripts/smoke_rag.py`
+      - Smoke `Chunker` (split a 5000-char doc, assert chunk count > 1).
+      - Smoke `Retrieval` ensemble weights (load config, assert
+        `sum == 1.0`).
+      - Smoke `VectorStore` connection (skip if chromadb not installed).
+
+      ### D. `tests/test_rag/`
+      - `test_chunker.py`, `test_retrieval.py` (weights), `test_loader.py`.
+
+      ### E. Final commit & tag
+      ```
+      git add -A
+      git commit -m "feat(day5): RAG (chromadb 4 strategies) + Obsidian/Git sync scaffolds"
+      git tag -a v0.1 -m "hello-agent-2 v0.1 — 5-day backbone complete"
+      git push origin wt/e5bdcb08 --follow-tags
+      ```
+
+      ## Deliverable
+      1. All §A / §B / §C / §D files exist + import cleanly.
+      2. Ruff clean.
+      3. `uv run python scripts/smoke_rag.py` exits 0.
+      4. `uv run pytest tests/test_rag/ -q` passes.
+      5. Day 1-4 still green.
+      6. `git tag` shows `v0.1` locally.
+      7. `git ls-remote origin refs/tags/v0.1` returns the tag SHA (push succeeded).
+      8. Final report at
+         `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.mavis\plans\day5-final-deliverable.md`
+         with: file count, all smoke results, full pytest summary,
+         v0.1 tag SHA, and a 5-line "what's left for v0.2" note.
+    verify_prompt: |
+      Verifier for **Day 5 — final**.
+
+      Working dir: `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08`
+
+      ## Re-verify
+
+      1. **All §A / §B / §C / §D files** exist with non-empty content.
+      2. **Imports** — `uv run python -c "from hello_agent.rag import loader, chunker, embedder, vector_store, retrieval, index_cli; from hello_agent.memory import obsidian_sync, git_sync"` exits 0.
+      3. **Smoke** — `uv run python scripts/smoke_rag.py` exits 0.
+      4. **Ruff** — `uv run ruff check hello_agent/ scripts/ tests/` exits 0.
+      5. **Pytest** — `uv run pytest tests/test_rag/ -q` exits 0.
+         ≥3 distinct test files.
+      6. **Retrieval weights** — `python -c "from hello_agent.rag.retrieval import load_ensemble_weights; print(sum(load_ensemble_weights().values()))"` prints `1.0` (or close, within 0.001).
+      7. **Day 1-4 still green** — re-run all prior pytest suites.
+      8. **Git tag** — `git tag -l v0.1` returns `v0.1`.
+      9. **Git push tag** — `git ls-remote origin refs/tags/v0.1` returns a SHA matching `git rev-list -n1 v0.1`.
+      10. **ENGINEERING.md §3 directory tree match** — confirm
+          `hello_agent/` has at least: `core/`, `agents/`, `tools/`
+          (with `builtin/`), `context/`, `memory/`, `rag/`. (Web,
+          windows, protocols, observability, skills, cli are
+          next-version; missing them is OK for v0.1.)
+      11. **Final report exists** — `.mavis/plans/day5-final-deliverable.md`
+          is non-empty and lists v0.1 tag SHA.
+
+      PASS = all 11. FAIL = exact items + output. This is the final
+      task — if FAIL, the user is unblocked at v0.0.5, not v0.1.
