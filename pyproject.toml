@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hello-agent"
+version = "0.1.0"
+description = "Personal Windows Python agent — Hermes-inspired architecture with Obsidian-backed memory and advanced RAG"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+authors = [{ name = "peckerpro", email = "promaxpecker@gmail.com" }]
+keywords = ["agent", "llm", "windows", "obsidian", "rag", "hermes"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Exact-pin core dependencies (hermes-agent 2026-05 hardening policy).
+# Anything provider-specific (chromadb, markitdown, mineru, fastapi, etc.)
+# lives in [project.optional-dependencies] and gets lazy-installed.
+dependencies = [
+  "openai==2.24.0",                       # OpenAI-compatible LLM client
+  "python-dotenv==1.2.2",                 # .env loader
+  "httpx[socks]==0.28.1",                 # HTTP client
+  "rich==14.3.3",                         # Terminal UI
+  "pydantic==2.13.4",                     # Config / data validation
+  "pydantic-settings==2.13.0",            # .env -> pydantic
+  "prompt_toolkit==3.0.52",               # Interactive REPL
+  "tenacity==9.1.4",                      # Retries
+  "pyyaml==6.0.3",                        # config.yaml loader
+  "loguru==0.7.3",                        # Logging
+  "psutil==7.2.2",                        # Cross-platform process / system info
+  "typer==0.20.0",                        # CLI framework
+  "tiktoken==0.12.0",                     # Token counting
+  "python-frontmatter==1.1.0",            # Obsidian notes frontmatter
+  "tzdata==2025.3; sys_platform == 'win32'",  # Windows ships no IANA tzdata
+]
+
+[project.optional-dependencies]
+# Document parsing
+markitdown = ["markitdown[all]==0.1.4"]
+# RAG vector store
+chromadb = ["chromadb==1.0.20"]
+# RAG sentence-transformers fallback for offline embedding
+local-embed = ["sentence-transformers==5.0.0"]
+# Web UI backend
+web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.0.1", "sse-starlette==2.1.3"]
+# System tray + autostart
+windows = ["pystray==0.19.5", "Pillow==12.2.0", "pywin32==311; sys_platform == 'win32'"]
+# MCP support
+mcp = ["mcp==1.26.0", "starlette==1.0.1"]
+# Web search / fetch extras
+web-extras = ["selectolax==0.3.21", "duckduckgo-search==8.0.0"]
+# All non-lazy providers combined (for power users / CI)
+all = [
+  "hello-agent[markitdown]",
+  "hello-agent[chromadb]",
+  "hello-agent[web]",
+  "hello-agent[windows]",
+  "hello-agent[mcp]",
+  "hello-agent[web-extras]",
+]
+dev = [
+  "pytest==9.0.2",
+  "pytest-asyncio==1.3.0",
+  "ruff==0.15.10",
+  "freezegun==1.5.1",
+]
+
+[project.scripts]
+hello-agent = "hello_agent.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/peckerpro/hello-agent-2"
+Repository = "https://github.com/peckerpro/hello-agent-2"
+Issues = "https://github.com/peckerpro/hello-agent-2/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hello_agent"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"hello_agent/web/static" = "hello_agent/web/static"
+
+[tool.ruff]
+preview = true
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# PLW1514 forces explicit encoding on file ops (Windows cp1252 footgun).
+select = ["E", "F", "I", "PLW1514", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLW1514"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -ra"
+markers = [
+  "integration: marks tests requiring external services (API keys, MinerU, etc.)",
+  "windows: marks tests that only run on Windows",
+]

@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ty_cache/
+htmlcov/
+.coverage
+.coverage.*
+.cache
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+uv.lock.local
+
+# Runtime data (regeneratable)
+data/
+logs/
+traces/
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# User config (per-machine secrets)
+.env
+.env.local
+config.local.yaml
+
+# Build outputs
+web-ui/node_modules/
+web-ui/dist/
+hello_agent/web/static/assets/
+
+# Local references
+.reference/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

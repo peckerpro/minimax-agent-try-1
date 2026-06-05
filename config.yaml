@@ -1,0 +1,123 @@
+# hello-agent default configuration.
+# Anything in .env wins over this file (config.yaml handles non-secret
+# structure; .env handles secrets and deployment overrides).
+#
+# Sections mirror the [project.optional-dependencies] buckets and the
+# module structure so you can grep for a feature and find its config.
+
+agent:
+  # Default agent type used by `hello-agent chat` and `hello-agent run`.
+  # One of: simple | react | plan_solve | reflection
+  default_type: react
+  # Max tool-calling iterations per turn. Shared with subagents.
+  max_iterations: 30
+  # Per-turn budget (USD) — refuses to start a new iteration if exceeded.
+  max_cost_per_turn_usd: 0.50
+  # Enable cross-session memory recall before every turn.
+  enable_memory_recall: true
+  # Enable RAG context injection before every turn.
+  enable_rag: true
+  # Top-K memories + top-K RAG chunks to inject.
+  memory_top_k: 5
+  rag_top_k: 8
+
+terminal:
+  # Working directory for shell / file tools.
+  cwd: null  # null = use process CWD
+  # Default timeout for shell commands.
+  shell_timeout_seconds: 60
+  # Max output bytes from a single shell command before truncation.
+  shell_max_output_bytes: 50000
+
+memory:
+  short_term:
+    # Max messages kept in short-term memory (sliding window).
+    max_messages: 50
+  long_term:
+    # SQLite file path (relative to HELLO_AGENT_HOME).
+    db_path: memory/long_term.db
+  episodic:
+    # When to write a session-summary to episodic memory (every N turns).
+    summarize_every_n_turns: 20
+  obsidian:
+    # Subdirectory inside the vault where memory notes go.
+    memory_subdir: memory
+    # File naming: timestamp_slug or session_id
+    filename_pattern: "{date}_{slug}"
+    # Auto-commit cadence (minutes); 0 = disabled.
+    auto_commit_interval_minutes: 5
+    # Auto-push to remote (requires OBSIDIAN_GIT_TOKEN); 0 = disabled.
+    auto_push_interval_minutes: 15
+
+rag:
+  loader:
+    # File extensions recognized by the loader.
+    extensions: [".md", ".txt", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".csv"]
+    pdf_engine: mineru                   # mineru | markitdown | pypdf
+  chunker:
+    chunk_size_tokens: 512
+    chunk_overlap_tokens: 64
+  embedder:
+    batch_size: 32
+    cache_dir: ~/.cache/hello-agent/embeddings
+  retrieval:
+    # Strategies enabled and their weights (used in ensemble mode).
+    strategies:
+      rewrite: { enabled: true, weight: 0.4 }
+      hyde:    { enabled: true, weight: 0.2 }
+      multi_query: { enabled: true, weight: 0.2 }
+      rerank:  { enabled: true, weight: 0.2, top_n: 20 }
+    # Final fused results returned to ContextBuilder.
+    final_top_k: 8
+    # Optional re-ranker model (cross-encoder). "" = no rerank.
+    reranker_model: ""
+
+tools:
+  # Toolset assignments per agent type. The DEFAULT bundle is always
+  # loaded; this adds extra tools per agent profile.
+  default:
+    enabled: [file_tools, shell_tool, web_search, web_fetch, document_parser, todowrite, notify]
+    disabled: []
+  react:
+    enabled: [task_tool]   # subagent delegation
+    disabled: []
+  plan_solve:
+    enabled: []
+    disabled: [task_tool]  # plan_solve already manages its own subtasks
+  # Tools that REQUIRE user confirmation before execution (one per session).
+  require_confirmation:
+    - shell_tool.run_powershell
+    - shell_tool.run_cmd
+    - file_tools.write_file
+    - file_tools.edit_file
+
+context:
+  # Total context budget (tokens) — older messages get compressed/truncated.
+  max_context_tokens: 128000
+  # Reserve this many tokens for the LLM's response.
+  response_reserve_tokens: 4000
+  # When to trigger summarization of old messages.
+  summarize_after_tokens: 100000
+  # Truncation strategy for long tool output.
+  truncator:
+    strategy: head_tail    # head_tail | middle_out | summarize
+    head_lines: 50
+    tail_lines: 20
+
+logging:
+  # loguru level
+  level: INFO
+  # One log file per category (rotated at 10MB, 5 backups)
+  files:
+    agent: ~/.hello-agent/logs/agent.log
+    tools: ~/.hello-agent/logs/tools.log
+    llm: ~/.hello-agent/logs/llm.log
+  # Pretty console output (set false in CI).
+  console_pretty: true
+
+tracing:
+  # Always-on per-run trace tree.
+  enabled: true
+  # Export traces to JSON for analysis.
+  export_json: true
+  export_dir: ~/.hello-agent/traces

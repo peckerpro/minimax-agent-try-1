@@ -1,0 +1,147 @@
+plan: hello-agent-2-v0.1
+title: "hello-agent-2 · v0.1 (5-day backbone, Hermetic agent loop)"
+owner: peckerpro
+createdBy: mavis-root
+
+context:
+  workspace: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08
+  reins_root: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\.harness\reins
+  eng_doc: D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\docs\ENGINEERING.md
+  github_remote: https://github.com/peckerpro/minimax-agent-try-1.git
+  user_policies:
+    - "Tight feedback loops: smoke after each module, not at the end"
+    - "Author → reviewer → fix → push runs without user check-in"
+    - "User does not review until a milestone (v0.1) is done"
+    - "Exact-pinned deps; PLW1514 enforcement; no LangChain"
+
+tasks:
+  - id: day1-scaffold
+    title: "Day 1 — uv sync + core/ + minimal cli chat"
+    agent: backend-coder
+    inputs:
+      eng_doc_sections: [3, 4, 6]
+    deliverable:
+      - pyproject.toml (already laid down — verify)
+      - uv sync runs clean
+      - hello_agent/core/{config,llm,types,logging,paths,exceptions}.py
+      - hello_agent/agents/base.py + simple.py
+      - hello_agent/cli/main.py + chat.py
+      - scripts/smoke_core.py + scripts/smoke_cli.py
+    smoke: |
+      cd $WORKSPACE
+      uv sync
+      uv run ruff check hello_agent/
+      uv run python scripts/smoke_core.py
+      uv run python scripts/smoke_cli.py --prompt "hello"
+    verify:
+      tester:
+        - uv run pytest tests/test_core/ -q
+        - uv run pytest tests/test_agents/ -q
+      reviewer:
+        - PLW1514 sweep
+        - exact-pinned deps
+        - §3 tree match
+    on_pass: commit_and_push
+    on_fail: coder_fix_loop
+
+  - id: day2-tooling
+    title: "Day 2 — Tool registry + builtin document parser + file tools"
+    agent: backend-coder
+    depends_on: [day1-scaffold]
+    inputs:
+      eng_doc_sections: [6, 7.1]
+    deliverable:
+      - hello_agent/tools/{base,registry,response,circuit_breaker,permission}.py
+      - hello_agent/tools/builtin/{document_parser,file_tools,shell_tool}.py
+      - scripts/smoke_tools.py
+    smoke: |
+      uv run python scripts/smoke_tools.py
+    verify:
+      tester:
+        - uv run pytest tests/test_tools/ -q
+      reviewer:
+        - ToolResponse shape consistency
+        - MinerU→markitdown fallback chain correctness
+
+  - id: day2-review
+    title: "Day 2 — review day1+day2 → fix → push"
+    agent: reviewer
+    depends_on: [day2-tooling]
+    on_pass: commit_and_push
+
+  - id: day3-react-loop
+    title: "Day 3 — ReAct agent loop + router + CLI run"
+    agent: backend-coder
+    depends_on: [day2-review]
+    inputs:
+      eng_doc_sections: [6, 7.2]
+    deliverable:
+      - hello_agent/agents/{react,plan_solve,reflection,router}.py
+      - hello_agent/cli/run.py
+    smoke: |
+      uv run python scripts/smoke_agents.py
+      uv run hello-agent run "what is 2+2"
+    verify:
+      tester: uv run pytest tests/test_agents/ -q
+      reviewer: Hermes borrowing map §5 alignment
+
+  - id: day3-review
+    title: "Day 3 — review day3 → fix → push"
+    agent: reviewer
+    depends_on: [day3-react-loop]
+    on_pass: commit_and_push
+
+  - id: day4-context-mem
+    title: "Day 4 — Context engineering + Memory (short/long/episodic)"
+    agent: backend-coder
+    depends_on: [day3-review]
+    inputs:
+      eng_doc_sections: [6, 7.3]
+    deliverable:
+      - hello_agent/context/{history,token_counter,truncator,builder}.py
+      - hello_agent/memory/{short_term,long_term,episodic}.py
+      - scripts/smoke_context.py
+    smoke: uv run python scripts/smoke_context.py
+    verify:
+      tester: uv run pytest tests/test_context/ tests/test_memory/ -q
+      reviewer: ContextBuilder assembles all 5 sources correctly
+
+  - id: day4-review
+    title: "Day 4 — review day4 → fix → push"
+    agent: reviewer
+    depends_on: [day4-context-mem]
+    on_pass: commit_and_push
+
+  - id: day5-rag-obsidian
+    title: "Day 5 — RAG (chromadb 4 strategies) + Obsidian sync"
+    agent: backend-coder
+    depends_on: [day4-review]
+    inputs:
+      eng_doc_sections: [6, 7.4, 7.5]
+    deliverable:
+      - hello_agent/rag/{loader,chunker,embedder,vector_store,retrieval,index_cli}.py
+      - hello_agent/memory/{obsidian_sync,git_sync}.py
+      - scripts/smoke_rag.py
+    smoke: |
+      uv run python scripts/smoke_rag.py
+      uv run hello-agent rag index docs/
+      uv run hello-agent rag query "What is ReAct?"
+    verify:
+      tester: uv run pytest tests/test_rag/ -q
+      reviewer: 4-strategy ensemble weights sum to 1.0
+
+  - id: day5-review
+    title: "Day 5 — final review → fix → tag v0.1 → push"
+    agent: reviewer
+    depends_on: [day5-rag-obsidian]
+    on_pass: commit_tag_and_push_v0.1
+    notify_user: true
+
+settings:
+  push_retries: 10
+  push_retry_delay_seconds: 5
+  default_timeout_minutes: 60
+  test_suite_timeout_minutes: 10
+  notify_on_each_milestone: true
+  notify_user_only_on:
+    - on_pass: commit_tag_and_push_v0.1
