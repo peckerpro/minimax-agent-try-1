@@ -1,0 +1,3916 @@
+# hello-agent-2 · Codex-CLI Executable Engineering Brief
+
+> **Purpose of this document**: Throw this file to Codex CLI (or any coding
+> agent / human) and have them produce the hello-agent-2 codebase as
+> specified. Every section is concrete, version-pinned, and named after
+> specific files in either this project or `NousResearch/hermes-agent`
+> (the upstream we're borrowing architecture from).
+>
+> **Source of truth**: this document. If a code file disagrees with this
+> doc, the doc wins.
+>
+> **Date**: 2026-06-05
+> **Target Python**: 3.11+ (project supports 3.11, 3.12, 3.13)
+> **Target platform**: Windows 10 / 11 (also runs on macOS / Linux for dev)
+
+---
+
+## Table of Contents
+
+1. [Project Identity](#1-project-identity)
+2. [One-shot Setup Commands](#2-one-shot-setup-commands)
+3. [Complete Directory Tree](#3-complete-directory-tree)
+4. [Configuration Files (full content)](#4-configuration-files-full-content)
+   - 4.1 `pyproject.toml`
+   - 4.2 `.env.example`
+   - 4.3 `config.yaml` (default)
+   - 4.4 `.gitignore`
+   - 4.5 `.python-version`
+5. [Hermes Agent Borrowing Map](#5-hermes-agent-borrowing-map)
+6. [Per-Module Code Specs](#6-per-module-code-specs)
+   - 6.1 `hello_agent/__init__.py`, `__main__.py`
+   - 6.2 `hello_agent/core/`
+   - 6.3 `hello_agent/agents/`
+   - 6.4 `hello_agent/tools/`
+   - 6.5 `hello_agent/context/`
+   - 6.6 `hello_agent/memory/`
+   - 6.7 `hello_agent/rag/`
+   - 6.8 `hello_agent/protocols/`
+   - 6.9 `hello_agent/observability/`
+   - 6.10 `hello_agent/skills/`
+   - 6.11 `hello_agent/windows/`
+   - 6.12 `hello_agent/cli/`
+7. [Feature Implementation Specs](#7-feature-implementation-specs)
+   - 7.1 MinerU 2.5 Pro + markitdown fallback chain
+   - 7.2 chromadb 4-strategy advanced retrieval
+   - 7.3 Obsidian memory vault + Git sync
+   - 7.4 Web UI (FastAPI + React) API contract + component tree
+   - 7.5 Windows tray + autostart
+   - 7.6 MCP server (tools exposed)
+8. [v0.1 5-Day Breakdown with Daily Deliverables](#8-v01-5-day-breakdown-with-daily-deliverables)
+9. [Local Development Flow](#9-local-development-flow)
+10. [Verification & Acceptance Criteria](#10-verification--acceptance-criteria)
+11. [Reference: hermes-agent Source Locations](#11-reference-hermes-agent-source-locations)
+
+---
+
+## 1. Project Identity
+
+| Key | Value |
+|---|---|
+| **Project name** | `hello-agent-2` (repo) / `hello-agent` (PyPI name) |
+| **Tagline** | Personal Windows Python agent — Hermes-inspired with Obsidian-backed memory and advanced RAG |
+| **Author** | peckerpro (peckerpro@gmail.com per git config) |
+| **License** | MIT |
+| **Working dir (this brief's workspace)** | `D:\Minimax-project\hello-agent-2\` (root repo) |
+| **Worktree for v0.1** | `D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\` |
+| **Python import name** | `hello_agent` (underscore, not hyphen — Python identifier rules) |
+| **CLI command** | `hello-agent` (hyphen — bash-friendly) |
+| **Python required** | `>=3.11,<3.14` |
+| **Build backend** | `hatchling` |
+| **Package manager** | `uv` (not pip directly) |
+| **Architecture source** | `github.com/NousResearch/hermes-agent` (v0.15.2+, May 2026) |
+| **Storage** | SQLite + FTS5 + trigram FTS5 + chromadb (vectors) |
+| **LLM protocol** | OpenAI-compatible chat completions, any base_url |
+| **Tool protocol** | Custom JSON-schema tool definitions, dispatched via `tools/registry.py` |
+| **IM / agent protocol** | MCP (client + server, stdio) |
+
+### What hello-agent-2 is NOT
+
+- **NOT** a multi-process gateway system (no Telegram bot, no Discord bot — that's a v1.0+ milestone, not v0.1)
+- **NOT** a self-improving / "learning loop" agent (Hermes has this; we copy the SKILL.md system but NOT the auto-skill-generation)
+- **NOT** multi-tenant (single-user Windows machine)
+- **NOT** WSL-bound (native Windows, but if WSL2 is available hermes-style installations work too)
+
+---
+
+## 2. One-shot Setup Commands
+
+Run these from the worktree root (`D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08\`) after cloning the repo:
+
+```powershell
+# 1. Install uv (one-time, per machine)
+irm https://astral.sh/uv/install.ps1 | iex
+# Verify: uv --version  →  should be 0.11.x or newer
+
+# 2. Create a Python 3.11 venv (matches project pin)
+uv venv .venv --python 3.11
+
+# 3. Activate the venv
+.venv\Scripts\Activate.ps1
+
+# 4. Sync dependencies (resolves exact-pinned versions, writes uv.lock)
+uv sync --all-extras
+
+# 5. Install pre-commit hooks (optional but recommended — see §9)
+#    (skip for v0.1; not yet wired up)
+
+# 6. Copy the .env template
+Copy-Item .env.example .env
+# Edit .env with your LLM API key, MinerU key, Obsidian vault path
+
+# 7. Verify install
+uv run hello-agent --version
+# Expected output: hello-agent 0.1.0
+
+# 8. First run — empty config, just confirms CLI plumbing
+uv run hello-agent chat "Hello, what's your name?"
+```
+
+**Time**: ~3-5 minutes on a clean Windows box with Python 3.11 already installed system-wide.
+
+---
+
+## 3. Complete Directory Tree
+
+Generated by codex from the spec below. After v0.1 is complete, the worktree should look like this:
+
+```
+hello-agent-2/
+├── .git/
+├── .gitignore
+├── .python-version                    # contains "3.11"
+├── .env.example
+├── .env                               # user-created, not in git
+├── LICENSE                            # MIT
+├── README.md
+├── pyproject.toml
+├── uv.lock
+│
+├── docs/
+│   ├── ENGINEERING.md                 # THIS FILE — kept in repo as canonical brief
+│   ├── ARCHITECTURE.md                # v0.3+ — diagrams + design decisions
+│   ├── TOOL_AUTHORING.md              # v0.2+ — how to add custom tools
+│   ├── WINDOWS_SETUP.md               # v0.1 — Windows-specific install notes
+│   └── CHANGELOG.md
+│
+├── hello_agent/                       # main Python package
+│   ├── __init__.py                    # __version__, package metadata
+│   ├── __main__.py                    # `python -m hello_agent` → cli.main:main
+│   │
+│   ├── core/                          # foundational abstractions
+│   │   ├── __init__.py
+│   │   ├── config.py                  # pydantic-settings; load config.yaml + .env
+│   │   ├── llm.py                     # OpenAI-compatible LLM client (sync + async + stream)
+│   │   ├── types.py                   # Message, ToolCall, ToolResult, AgentState, ToolResponse
+│   │   ├── logging.py                 # loguru setup, profile-aware paths
+│   │   ├── paths.py                   # get_hello_agent_home() — like hermes_constants
+│   │   └── exceptions.py              # HelloAgentError hierarchy
+│   │
+│   ├── agents/                        # agent loop implementations
+│   │   ├── __init__.py
+│   │   ├── base.py                    # Agent ABC + AgentState dataclass
+│   │   ├── simple.py                  # SimpleAgent — single-shot LLM call, no tools
+│   │   ├── react.py                   # ReActAgent — reasoning + acting loop (DEFAULT)
+│   │   ├── plan_solve.py              # PlanAndSolveAgent — first plan, then execute
+│   │   ├── reflection.py              # ReflectionAgent — execute then reflect/iterate
+│   │   └── router.py                  # TaskRouter — classify and dispatch to the right agent
+│   │
+│   ├── tools/                         # tool system
+│   │   ├── __init__.py
+│   │   ├── base.py                    # Tool ABC, @tool decorator, schema-from-signature
+│   │   ├── registry.py                # ToolRegistry — auto-discover, filter, dispatch
+│   │   ├── response.py                # ToolResponse {success, data, error, hint}
+│   │   ├── circuit_breaker.py         # CircuitBreaker — fail-fast on broken tools
+│   │   ├── permission.py              # dangerous_op allowlist + per-tool confirmation
+│   │   └── builtin/
+│   │       ├── __init__.py
+│   │       ├── document_parser.py      # MinerU → markitdown → text fallback chain
+│   │       ├── file_tools.py          # read_file / write_file / edit_file (with file lock)
+│   │       ├── shell_tool.py          # run_powershell / run_cmd with timeout + truncation
+│   │       ├── web_search.py          # SearXNG / DuckDuckGo / Brave search backends
+│   │       ├── web_fetch.py           # URL → markdown via httpx + selectolax
+│   │       ├── todowrite.py           # in-session task list
+│   │       ├── task_tool.py           # subagent delegation (router)
+│   │       └── notify.py              # Windows toast notification
+│   │
+│   ├── context/                       # context engineering
+│   │   ├── __init__.py
+│   │   ├── history.py                 # HistoryManager — sliding window + per-message flags
+│   │   ├── token_counter.py           # tiktoken + heuristic fallback
+│   │   ├── truncator.py               # ObservationTruncator — compress long tool output
+│   │   └── builder.py                 # ContextBuilder — assemble system + history + tools + RAG
+│   │
+│   ├── memory/                        # memory system
+│   │   ├── __init__.py
+│   │   ├── short_term.py              # in-conversation scratchpad
+│   │   ├── long_term.py               # SQLite-backed facts (user prefs, project context)
+│   │   ├── episodic.py                # past task summaries (linked to sessions)
+│   │   ├── obsidian_sync.py           # Obsidian markdown serializer + Git sync
+│   │   └── git_sync.py                # auto-commit + push to OBSIDIAN_GIT_REPO
+│   │
+│   ├── rag/                           # retrieval-augmented generation
+│   │   ├── __init__.py
+│   │   ├── loader.py                  # docx / pdf / xlsx / md / txt / code → text
+│   │   ├── chunker.py                 # sliding window + paragraph-aware splitter
+│   │   ├── embedder.py                # OpenAI / sentence-transformers / local
+│   │   ├── vector_store.py            # chromadb wrapper
+│   │   ├── retrieval.py               # query_rewrite / hyde / multi_query / rerank pipeline
+│   │   └── index_cli.py               # `hello-agent rag index <path>` / `query <text>`
+│   │
+│   ├── protocols/                     # external protocol adapters
+│   │   ├── __init__.py
+│   │   ├── mcp_client.py              # consume MCP servers over stdio
+│   │   └── mcp_server.py              # expose hello_agent tools as MCP server
+│   │
+│   ├── observability/                 # observability
+│   │   ├── __init__.py
+│   │   ├── tracer.py                  # one tree per run, pretty-printed + JSON export
+│   │   └── metrics.py                 # token usage / tool call counts / cost estimates
+│   │
+│   ├── skills/                        # Skills (SKILL.md format, Hermes-compatible)
+│   │   ├── __init__.py
+│   │   ├── loader.py                  # scan ~/.hello_agent/skills/ + builtin/
+│   │   └── builtin/
+│   │       ├── file_organize.md
+│   │       ├── daily_review.md
+│   │       └── obsidian_lookup.md
+│   │
+│   ├── windows/                       # Windows-specific (no-op on Linux/macOS)
+│   │   ├── __init__.py
+│   │   ├── tray.py                    # pystray system tray icon + menu
+│   │   ├── autostart.py               # HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+│   │   ├── env.py                     # environment probe (Python version, key tools, network)
+│   │   └── shortcuts.py               # global hotkey registration (optional, v0.6+)
+│   │
+│   ├── web/                           # Web UI (FastAPI backend, React frontend)
+│   │   ├── __init__.py
+│   │   ├── server.py                  # FastAPI app, REST + SSE endpoints
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   ├── chat.py                # POST /api/chat, GET /api/chat/stream
+│   │   │   ├── sessions.py            # GET /api/sessions, POST /api/sessions/:id/resume
+│   │   │   ├── skills.py              # GET /api/skills, POST /api/skills/install
+│   │   │   ├── tools.py               # GET /api/tools (list enabled tools)
+│   │   │   └── config.py              # GET/PUT /api/config
+│   │   └── static/                    # built React assets (after `npm run build`)
+│   │       ├── index.html
+│   │       └── assets/
+│   │
+│   └── cli/                           # typer-based CLI
+│       ├── __init__.py
+│       ├── main.py                    # `hello-agent` entry point
+│       ├── chat.py                    # `hello-agent chat` — interactive TUI
+│       ├── run.py                     # `hello-agent run "query"` — one-shot
+│       ├── serve.py                   # `hello-agent serve` — start daemon + tray
+│       ├── rag.py                     # `hello-agent rag index|query`
+│       ├── memory.py                  # `hello-agent memory show|search|forget`
+│       ├── tools_cmd.py               # `hello-agent tools list|enable|disable`
+│       ├── mcp.py                     # `hello-agent mcp serve|connect`
+│       ├── doctor.py                  # `hello-agent doctor` — env self-check
+│       └── completions.py             # `hello-agent completion bash|zsh|fish|pwsh`
+│
+├── web-ui/                            # React frontend (separate workspace)
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   ├── index.html
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── App.tsx
+│   │   ├── api/
+│   │   │   ├── client.ts              # axios / fetch wrapper to /api
+│   │   │   └── types.ts               # shared types with backend
+│   │   ├── components/
+│   │   │   ├── ChatPanel.tsx
+│   │   │   ├── MessageList.tsx
+│   │   │   ├── ToolCallCard.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   ├── SkillsPanel.tsx
+│   │   │   ├── MemoryPanel.tsx
+│   │   │   └── ConfigPanel.tsx
+│   │   ├── hooks/
+│   │   │   ├── useChatStream.ts       # SSE consumer
+│   │   │   ├── useSession.ts
+│   │   │   └── useTools.ts
+│   │   ├── store/                     # nanostores (mirrors hermes-tui style)
+│   │   │   ├── chat.ts
+│   │   │   ├── session.ts
+│   │   │   └── config.ts
+│   │   └── styles/
+│   │       └── globals.css
+│   └── public/
+│
+├── tests/
+│   ├── conftest.py                    # fixtures: fake_llm, tmp_workspace, in_memory_db
+│   ├── test_core/
+│   │   ├── test_config.py
+│   │   ├── test_llm.py
+│   │   ├── test_types.py
+│   │   └── test_paths.py
+│   ├── test_agents/
+│   │   ├── test_simple.py
+│   │   ├── test_react.py
+│   │   ├── test_plan_solve.py
+│   │   ├── test_reflection.py
+│   │   └── test_router.py
+│   ├── test_tools/
+│   │   ├── test_registry.py
+│   │   ├── test_response.py
+│   │   ├── test_document_parser.py
+│   │   ├── test_file_tools.py
+│   │   └── test_shell_tool.py
+│   ├── test_context/
+│   │   ├── test_history.py
+│   │   ├── test_token_counter.py
+│   │   └── test_truncator.py
+│   ├── test_memory/
+│   │   ├── test_short_term.py
+│   │   ├── test_long_term.py
+│   │   └── test_obsidian_sync.py
+│   ├── test_rag/
+│   │   ├── test_loader.py
+│   │   ├── test_chunker.py
+│   │   ├── test_embedder.py
+│   │   └── test_retrieval.py
+│   ├── test_protocols/
+│   │   └── test_mcp.py
+│   └── test_windows/
+│       └── test_tray.py               # uses mock on non-Windows
+│
+├── examples/
+│   ├── 01_quick_chat.py               # hello_agent.agents.simple.run("hello")
+│   ├── 02_file_organize.py            # uses shell_tool + file_tools
+│   ├── 03_pdf_summarize.py            # uses document_parser + rag + memory
+│   ├── 04_obsidian_recall.py          # uses memory.obsidian_sync + memory.long_term
+│   └── 05_advanced_retrieval.py       # all 4 retrieval strategies compared
+│
+└── scripts/
+    ├── dev_bootstrap.ps1              # one-shot Windows setup
+    ├── reset_state.ps1                # nuke ~/.hello_agent for clean test
+    └── run_tests.ps1                  # uv run pytest -q
+```
+
+**File count budget** for v0.1: ~80 source files, ~20 test files, ~5 examples.
+**LOC budget** for v0.1: ~4000-6000 lines of production code + ~1500 lines of tests.
+
+---
+
+## 4. Configuration Files (full content)
+
+### 4.1 `pyproject.toml`
+
+Create this file at the worktree root.
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hello-agent"
+version = "0.1.0"
+description = "Personal Windows Python agent — Hermes-inspired architecture with Obsidian-backed memory and advanced RAG"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+authors = [{ name = "peckerpro", email = "promaxpecker@gmail.com" }]
+keywords = ["agent", "llm", "windows", "obsidian", "rag", "hermes"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Exact-pin core dependencies (hermes-agent 2026-05 hardening policy).
+# Anything provider-specific (chromadb, markitdown, mineru, fastapi, etc.)
+# lives in [project.optional-dependencies] and gets lazy-installed.
+dependencies = [
+  "openai==2.24.0",                       # OpenAI-compatible LLM client
+  "python-dotenv==1.2.2",                 # .env loader
+  "httpx[socks]==0.28.1",                 # HTTP client
+  "rich==14.3.3",                         # Terminal UI
+  "pydantic==2.13.4",                     # Config / data validation
+  "prompt_toolkit==3.0.52",               # Interactive REPL
+  "tenacity==9.1.4",                      # Retries
+  "pyyaml==6.0.3",                        # config.yaml loader
+  "loguru==0.7.3",                        # Logging
+  "psutil==7.2.2",                        # Cross-platform process / system info
+  "tzdata==2025.3; sys_platform == 'win32'",  # Windows ships no IANA tzdata
+]
+
+[project.optional-dependencies]
+# Document parsing
+markitdown = ["markitdown[all]==0.1.4"]
+# RAG vector store
+chromadb = ["chromadb==1.0.20"]
+# RAG sentence-transformers fallback for offline embedding
+local-embed = ["sentence-transformers==5.0.0"]
+# Web UI backend
+web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.0.1", "sse-starlette==2.1.3"]
+# System tray + autostart
+windows = ["pystray==0.19.5", "Pillow==12.2.0", "pywin32==311; sys_platform == 'win32'"]
+# MCP support
+mcp = ["mcp==1.26.0", "starlette==1.0.1"]
+# All non-lazy providers combined (for power users / CI)
+all = [
+  "hello-agent[markitdown]",
+  "hello-agent[chromadb]",
+  "hello-agent[web]",
+  "hello-agent[windows]",
+  "hello-agent[mcp]",
+]
+dev = [
+  "pytest==9.0.2",
+  "pytest-asyncio==1.3.0",
+  "ruff==0.15.10",
+  "ty==0.0.21",
+  "freezegun==1.5.1",
+]
+
+[project.scripts]
+hello-agent = "hello_agent.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/peckerpro/hello-agent-2"
+Repository = "https://github.com/peckerpro/hello-agent-2"
+Issues = "https://github.com/peckerpro/hello-agent-2/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hello_agent"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"hello_agent/web/static" = "hello_agent/web/static"
+
+[tool.ruff]
+preview = true
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# PLW1514 forces explicit encoding on file ops (Windows cp1252 footgun).
+select = ["E", "F", "I", "PLW1514", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLW1514"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -ra"
+markers = [
+  "integration: marks tests requiring external services (API keys, MinerU, etc.)",
+  "windows: marks tests that only run on Windows",
+]
+
+[tool.ty.environment]
+python-version = "3.11"
+```
+
+### 4.2 `.env.example`
+
+```dotenv
+# === LLM (OpenAI-compatible, any provider) ===
+# Examples:
+#   OpenAI:      https://api.openai.com/v1
+#   DeepSeek:    https://api.deepseek.com/v1
+#   Zhipu GLM:   https://open.bigmodel.cn/api/paas/v4
+#   Ollama:      http://localhost:11434/v1
+#   LM Studio:   http://localhost:1234/v1
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-replace-me
+LLM_MODEL=gpt-4o-mini
+# Per-role overrides (optional)
+LLM_AUX_MODEL=gpt-4o-mini            # for embeddings, summarization, skill generation
+LLM_VISION_MODEL=gpt-4o               # for vision tools (v0.4+)
+# Request defaults
+LLM_TIMEOUT_SECONDS=60
+LLM_MAX_RETRIES=3
+
+# === Document parsing ===
+# MinerU 2.5 Pro (default for PDFs / scanned docs)
+MINERU_API_KEY=
+MINERU_BASE_URL=https://mineru.net/api/v4
+MINERU_MODEL=MinerU2.5Pro
+# markitdown is the fallback for everything else (no key needed)
+
+# === Memory / Obsidian sync ===
+OBSIDIAN_VAULT_PATH=                   # e.g. C:\Users\YourName\Documents\ObsidianVault
+OBSIDIAN_GIT_REPO=peckerpro/hello-agent-memory
+OBSIDIAN_GIT_TOKEN=                    # GitHub PAT with repo scope, for auto-push
+OBSIDIAN_GIT_PUSH_INTERVAL_MINUTES=15
+
+# === RAG ===
+EMBEDDING_PROVIDER=openai              # openai | local
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIM=1536
+CHROMADB_PERSIST_DIR=./data/chromadb
+# Default retrieval strategy: rewrite | hyde | multi_query | rerank
+RAG_DEFAULT_STRATEGY=rewrite
+
+# === Web UI ===
+WEB_HOST=127.0.0.1
+WEB_PORT=8648
+WEB_OPEN_BROWSER_ON_START=true
+
+# === Misc ===
+LOG_LEVEL=INFO
+HELLO_AGENT_HOME=~/.hello-agent
+HELLO_AGENT_PROFILE=default
+```
+
+### 4.3 `config.yaml` (default — committed to repo)
+
+```yaml
+# hello-agent default configuration.
+# Anything in .env wins over this file (config.yaml handles non-secret
+# structure; .env handles secrets and deployment overrides).
+#
+# Sections mirror the [project.optional-dependencies] buckets and the
+# module structure so you can grep for a feature and find its config.
+
+agent:
+  # Default agent type used by `hello-agent chat` and `hello-agent run`.
+  # One of: simple | react | plan_solve | reflection
+  default_type: react
+  # Max tool-calling iterations per turn. Shared with subagents.
+  max_iterations: 30
+  # Per-turn budget (USD) — refuses to start a new iteration if exceeded.
+  max_cost_per_turn_usd: 0.50
+  # Enable cross-session memory recall before every turn.
+  enable_memory_recall: true
+  # Enable RAG context injection before every turn.
+  enable_rag: true
+  # Top-K memories + top-K RAG chunks to inject.
+  memory_top_k: 5
+  rag_top_k: 8
+
+terminal:
+  # Working directory for shell / file tools.
+  cwd: null  # null = use process CWD
+  # Default timeout for shell commands.
+  shell_timeout_seconds: 60
+  # Max output bytes from a single shell command before truncation.
+  shell_max_output_bytes: 50000
+
+memory:
+  short_term:
+    # Max messages kept in short-term memory (sliding window).
+    max_messages: 50
+  long_term:
+    # SQLite file path (relative to HELLO_AGENT_HOME).
+    db_path: memory/long_term.db
+  episodic:
+    # When to write a session-summary to episodic memory (every N turns).
+    summarize_every_n_turns: 20
+  obsidian:
+    # Subdirectory inside the vault where memory notes go.
+    memory_subdir: memory
+    # File naming: timestamp_slug or session_id
+    filename_pattern: "{date}_{slug}"
+    # Auto-commit cadence (minutes); 0 = disabled.
+    auto_commit_interval_minutes: 5
+    # Auto-push to remote (requires OBSIDIAN_GIT_TOKEN); 0 = disabled.
+    auto_push_interval_minutes: 15
+
+rag:
+  loader:
+    # File extensions recognized by the loader.
+    extensions: [".md", ".txt", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".csv"]
+    pdf_engine: mineru                   # mineru | markitdown | pypdf
+  chunker:
+    chunk_size_tokens: 512
+    chunk_overlap_tokens: 64
+  embedder:
+    batch_size: 32
+    cache_dir: ~/.cache/hello-agent/embeddings
+  retrieval:
+    # Strategies enabled and their weights (used in ensemble mode).
+    strategies:
+      rewrite: { enabled: true, weight: 0.4 }
+      hyde:    { enabled: true, weight: 0.2 }
+      multi_query: { enabled: true, weight: 0.2 }
+      rerank:  { enabled: true, weight: 0.2, top_n: 20 }
+    # Final fused results returned to ContextBuilder.
+    final_top_k: 8
+    # Optional re-ranker model (cross-encoder). "" = no rerank.
+    reranker_model: ""
+
+tools:
+  # Toolset assignments per agent type. The DEFAULT bundle is always
+  # loaded; this adds extra tools per agent profile.
+  default:
+    enabled: [file_tools, shell_tool, web_search, web_fetch, document_parser, todowrite, notify]
+    disabled: []
+  react:
+    enabled: [task_tool]   # subagent delegation
+    disabled: []
+  plan_solve:
+    enabled: []
+    disabled: [task_tool]  # plan_solve already manages its own subtasks
+  # Tools that REQUIRE user confirmation before execution (one per session).
+  require_confirmation:
+    - shell_tool.run_powershell
+    - shell_tool.run_cmd
+    - file_tools.write_file
+    - file_tools.edit_file
+
+context:
+  # Total context budget (tokens) — older messages get compressed/truncated.
+  max_context_tokens: 128000
+  # Reserve this many tokens for the LLM's response.
+  response_reserve_tokens: 4000
+  # When to trigger summarization of old messages.
+  summarize_after_tokens: 100000
+  # Truncation strategy for long tool output.
+  truncator:
+    strategy: head_tail    # head_tail | middle_out | summarize
+    head_lines: 50
+    tail_lines: 20
+
+logging:
+  # loguru level
+  level: INFO
+  # One log file per category (rotated at 10MB, 5 backups)
+  files:
+    agent: ~/.hello-agent/logs/agent.log
+    tools: ~/.hello-agent/logs/tools.log
+    llm: ~/.hello-agent/logs/llm.log
+  # Pretty console output (set false in CI).
+  console_pretty: true
+
+tracing:
+  # Always-on per-run trace tree.
+  enabled: true
+  # Export traces to JSON for analysis.
+  export_json: true
+  export_dir: ~/.hello-agent/traces
+```
+
+### 4.4 `.gitignore`
+
+```gitignore
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ty_cache/
+htmlcov/
+.coverage
+.coverage.*
+.cache
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+uv.lock.local
+
+# Runtime data (regeneratable)
+data/
+logs/
+traces/
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# User config (per-machine secrets)
+.env
+.env.local
+config.local.yaml
+
+# Build outputs
+web-ui/node_modules/
+web-ui/dist/
+hello_agent/web/static/assets/
+
+# Local references
+.reference/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+```
+
+### 4.5 `.python-version`
+
+```
+3.11
+```
+
+---
+
+(End of part 1. See docs/ENGINEERING.md for parts 2+.)
+
+
+---
+
+## 5. Hermes Agent Borrowing Map
+
+This is the most important section. hello-agent-2 is a **distillation and
+adaptation** of hermes-agent, not a reimplementation. Every module below
+maps to a specific file in `NousResearch/hermes-agent` (read that file
+first, then apply the changes column).
+
+**How to use this section**: when you start implementing a module, run
+`curl -sSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/<path> | head -200` to see the upstream, then apply the changes.
+
+### 5.1 Core — paths, config, logging, LLM client
+
+| Hermes file (upstream) | Pattern borrowed | hello-agent file | Apply changes |
+|---|---|---|---|
+| `hermes_constants.py` | `get_hermes_home()` profile-aware path resolution; `_apply_profile_override()` runs before any module imports | `hello_agent/core/paths.py` | Rename `hermes_home` → `hello_agent_home`. Add Windows-specific default to `%LOCALAPPDATA%\hello-agent\` (not `~/.hello-agent`) for system-wide installs. Keep profile support. |
+| `hermes_state.py` | `SessionDB` class — SQLite + FTS5 + trigram FTS5 + WAL with NFS fallback + declarative schema reconciliation + `BEGIN IMMEDIATE` + jitter retry | `hello_agent/core/state.py` | (NEW file — put it in core/, not memory/, because state is cross-cutting). Rename `state.db` → `hello_agent.db`. Add tables for: `memories` (long-term facts), `episodes` (past task summaries), `tools_calls_log` (audit). Add `obsidian_export` column on memories. Otherwise **1:1** — this code is the most precious to borrow. |
+| `hermes_logging.py` | `setup_logging()` — per-category log files (agent.log / errors.log / gateway.log) with rotation, profile-aware paths | `hello_agent/core/logging.py` | Drop `gateway.log` (no gateway in v0.1). Keep agent.log + errors.log + add tools.log + llm.log. Switch stdlib `logging` → `loguru` (we listed loguru in deps). |
+| `cli.py` `load_cli_config()` | Merge `DEFAULT_CONFIG` + user `config.yaml` | `hello_agent/core/config.py` | Use `pydantic-settings` for env + `BaseModel` for config.yaml. The `config.yaml` defaults (see §4.3) are the new `DEFAULT_CONFIG`. |
+| `providers/openai.py` + `providers/anthropic.py` + `providers/gmi.py` (plugin/model-providers/) | Provider profiles with auto-detection by base_url | `hello_agent/core/llm.py` | Simplify to **just OpenAI-compatible** (the user wants `OpenAI格式封装`). Drop the anthropic/gmi branches. Auto-detect provider name from base_url (e.g. `api.deepseek.com` → `deepseek`) for logging only. Use `openai==2.24.0` SDK directly. |
+| `hermes_cli/commands.py` (`CommandDef`) | Data-driven command registry (canonical name, aliases, category, args_hint) | `hello_agent/cli/commands.py` | Adopt for `hello-agent` once we have more than 5 subcommands (v0.3+). For v0.1, hard-code subcommands in `cli/main.py` is fine. |
+
+### 5.2 Agents
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `run_agent.py` (`AIAgent` class) | The core agent loop: while `(api_call_count < max_iterations and budget.remaining > 0) or _budget_grace_call: ...` | `hello_agent/agents/base.py` (ABC) + `hello_agent/agents/react.py` (concrete default) | Rename AIAgent → AgentBase. Reduce `__init__` from 60 params to ~15 (drop: credential pool, iteration_budget, checkpoints, prefill_messages, service_tier, reasoning_config — most are gateway-specific). Keep: base_url, api_key, model, max_iterations, enabled_toolsets, session_id, system_prompt, callbacks. |
+| `cli.py` (`HermesCLI` class) | The interactive CLI orchestrator with slash commands, autocomplete, skin system | `hello_agent/cli/chat.py` | Simplify dramatically — HermesCLI is 11k LOC. Our `chat.py` should be ~500 LOC. Use `prompt_toolkit` + `rich` directly. Drop: `load_cli_config`, `process_command`, `KawaiiSpinner`. Keep: prompt loop, slash command resolution, session persistence (via core/state.py). |
+| `agent/display.py` (`KawaiiSpinner`) | Animated faces during API calls, `┊` activity feed for tool results | (not in v0.1 — use `rich.progress` instead) | v0.1 uses `rich.progress.Progress` with `Spinner` for the chat TUI. Kawaii faces are a v0.4 nice-to-have. |
+| (no hermes equivalent) | Plan-and-Solve, Reflection patterns | `hello_agent/agents/plan_solve.py`, `hello_agent/agents/reflection.py` | Borrow the **idea** from datawhale Hello-Agents chapter 4. Implementation: thin subclasses of `base.AgentBase` overriding the `step()` method. Hermes doesn't have these explicitly. |
+| (no hermes equivalent) | Task router | `hello_agent/agents/router.py` | Hermes uses `hermes` CLI subcommands instead of an in-loop router. Our router uses a cheap classification LLM call (or rule-based) to pick `simple` vs `react` vs `plan_solve` per user message. |
+
+### 5.3 Tools
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `tools/registry.py` | `registry.register(name, toolset, schema, handler, check_fn, requires_env)` — auto-discovery via `import tools.*` | `hello_agent/tools/registry.py` | Copy 1:1. The pattern is bulletproof. |
+| `toolsets.py` (`TOOLSETS` dict + `_HERMES_CORE_TOOLS`) | Per-platform toolset inheritance (CLI inherits from `_HERMES_CORE_TOOLS`, gateway inherits from `messaging`) | `hello_agent/tools/toolsets.py` | New file (Hermes inlines it; we extract for clarity). See §4.3 `tools.default.enabled` for our default. |
+| `tools/environments/local.py` | Terminal backends (local, docker, ssh, modal, daytona, singularity) | `hello_agent/tools/environments.py` | **v0.1: local only.** Modal/Daytona are out of scope. v1.0+ can add Docker + SSH if user asks. |
+| `tools/file.py` (ReadTool, WriteTool, EditTool) | File tools with optimistic lock + display_hermes_home() for path references | `hello_agent/tools/builtin/file_tools.py` | Copy 1:1. Replace `display_hermes_home()` with `display_hello_agent_home()`. |
+| `tools/terminal_tool.py` | Shell command exec with timeout, output capture, sandboxing | `hello_agent/tools/builtin/shell_tool.py` | On Windows, default to `powershell.exe` (not bash). Hermes bundles MinGit to provide bash on Windows; **we don't** — Windows users can install Git for Windows themselves if they want bash. |
+| `tools/web_search.py` | Multi-backend web search (Firecrawl/Exa/Parallel/Brave) | `hello_agent/tools/builtin/web_search.py` | v0.1: SearXNG self-hosted (free) + DuckDuckGo HTML (no key) as fallbacks. Skip Firecrawl/Exa (paid) for now. |
+| `tools/web_extract.py` | URL → markdown extraction | `hello_agent/tools/builtin/web_fetch.py` | v0.1: simple `httpx` + `selectolax` → readability-style extraction → markdown. No Firecrawl dependency. |
+| `tools/todo_tool.py` | In-session task list (agent-level, intercepted before handle_function_call) | `hello_agent/tools/builtin/todowrite.py` | Copy 1:1. |
+| `tools/delegate_tool.py` (TaskTool) | Subagent delegation (sync, parent waits for child) | `hello_agent/tools/builtin/task_tool.py` | Copy the **shape** (single + batch shapes, role-based gating, max_concurrent_children, subagent_auto_approve). Drop the kanban/board stuff. |
+| (no hermes equivalent) | Document parser chain (MinerU → markitdown → plain text) | `hello_agent/tools/builtin/document_parser.py` | New. See §7.1 for full spec. |
+| (no hermes equivalent) | Windows toast notification | `hello_agent/tools/builtin/notify.py` | New. Uses `windows-toasts` library. On non-Windows, no-op with warning. |
+| `tools/circuit_breaker.py` | Per-tool circuit breaker (fail-fast after N consecutive failures) | `hello_agent/tools/circuit_breaker.py` | Copy 1:1. |
+
+### 5.4 Context (context engineering)
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `agent/context_engine.py` | Assembles system prompt + history + tool schemas + RAG snippets into final prompt | `hello_agent/context/builder.py` | Copy the structure. Drop the provider-specific token reservation — `pydantic`-validate at config load. |
+| `agent/history_manager.py` (and `hermes_state.py` messages table) | History = list of `Message` dataclasses persisted to SQLite | `hello_agent/context/history.py` | History itself is in-memory; persistence is via `core/state.py` (don't duplicate). |
+| (no hermes equivalent — Hermes uses tiktoken via litellm) | Token counter | `hello_agent/context/token_counter.py` | Use `tiktoken` directly. Fallback heuristic for non-OpenAI tokenizers. |
+| `agent/conversation_compression.py` | Summarize old messages when context grows | `hello_agent/context/compressor.py` (v0.3+) | Copy the summarize-old approach. v0.1: simple head-tail truncation. v0.3: add LLM summarization. |
+| (no hermes equivalent) | Observation truncator (compress long tool output) | `hello_agent/context/truncator.py` | New. Strategies: head_tail, middle_out, summarize. See §4.3 `context.truncator`. |
+
+### 5.5 Memory (the user-personalized part)
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `agent/memory_provider.py` (`MemoryProvider` ABC) | Pluggable memory backends | `hello_agent/memory/base.py` (v0.3+) | Copy the ABC (`sync_turn`, `prefetch`, `shutdown`, `post_setup`). |
+| `plugins/memory/honcho/`, `mem0/`, `supermemory/` | External memory providers | v1.0+ (NOT v0.1) | We do **not** ship any memory provider plugins in v0.1. The OBSIDIAN_GIT_REPO is our memory backend. |
+| `agent/memory_manager.py` | Memory orchestration + lifecycle | `hello_agent/memory/manager.py` (v0.3+) | Copy the orchestration shell. Drop Honcho dialectic (v0.5+ maybe). |
+| (no hermes equivalent) | **Obsidian-formatted memory + Git sync** | `hello_agent/memory/obsidian_sync.py` + `hello_agent/memory/git_sync.py` | **NEW** — this is the user's core personalization. See §7.3. |
+| `hermes_state.py` (session_id, message history) | Long-term recall of past sessions | `hello_agent/memory/long_term.py` (uses `core/state.py` underneath) | Wrap state.py with a Memory API. Tables: `memories` (id, kind, content, embedding, created_at, last_accessed_at, access_count, source_session_id, obsidian_path), `memory_links` (from_memory_id, to_memory_id, relation), `episodes` (session_id, summary, started_at, ended_at). |
+
+### 5.6 RAG (the user-personalized part)
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| (no hermes equivalent — Hermes has no built-in RAG) | Document loader | `hello_agent/rag/loader.py` | **NEW**. See §7.2. Format support: `.md`, `.txt`, `.py`, `.ts`, `.tsx`, `.js`, `.json`, `.yaml`, `.csv`, `.pdf` (via MinerU/markitdown/pypdf), `.docx` (via markitdown), `.xlsx` (via markitdown). |
+| (no hermes equivalent) | Sliding-window chunker | `hello_agent/rag/chunker.py` | **NEW**. Sliding window of 512 tokens, 64 overlap, paragraph-aware boundaries. |
+| (no hermes equivalent) | Embedder | `hello_agent/rag/embedder.py` | **NEW**. Two backends: OpenAI (`text-embedding-3-small` default) and local (`sentence-transformers`). Same interface. |
+| (no hermes equivalent) | chromadb wrapper | `hello_agent/rag/vector_store.py` | **NEW**. Single-collection-per-source-path, persist to `CHROMADB_PERSIST_DIR`. |
+| (no hermes equivalent) | **4-strategy advanced retrieval** | `hello_agent/rag/retrieval.py` | **NEW** — this is the user's core personalization. See §7.2. query_rewrite / hyde / multi_query / rerank as composable strategies. |
+
+### 5.7 Protocols (MCP)
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `mcp_serve.py` | Run our tool registry as an MCP stdio server | `hello_agent/protocols/mcp_server.py` | Copy 1:1. Use `mcp==1.26.0` SDK. |
+| `agent/mcp_client.py` | Connect to external MCP servers over stdio, merge their tools into our registry | `hello_agent/protocols/mcp_client.py` | Copy 1:1. v0.1: support stdio only (skip SSE/HTTP transport). |
+
+### 5.8 Observability
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| (hermes doesn't have a single tracer — uses rich printing + loguru) | Per-run trace tree | `hello_agent/observability/tracer.py` | **NEW**. Tree of `TraceNode` (step, tool_call, llm_call). Pretty-print via `rich.tree`, export JSON to `~/.hello-agent/traces/`. |
+| (hermes uses `usage` in `update_token_counts`) | Token + cost tracking | `hello_agent/observability/metrics.py` | **NEW**. Aggregator that reads from state.db and produces reports. |
+
+### 5.9 Skills
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `agent/skill_commands.py` | Scan `~/.hermes/skills/`, inject SKILL.md as user message (preserves prompt caching) | `hello_agent/skills/loader.py` | Copy 1:1. Use `mavis/skills/loader.py` patterns. |
+| `skills/` (bundled skills) | SKILL.md frontmatter (name, description ≤60 chars, version, author, platforms, tags, category) + modern section order (# Title, When to Use, Prerequisites, How to Run, Quick Reference, Procedure, Pitfalls, Verification) | `hello_agent/skills/builtin/*.md` | Copy the format and standards. v0.1 ships 3 skills: `file_organize.md`, `daily_review.md`, `obsidian_lookup.md`. See §7.5.3 for examples. |
+| `agent/curator.py` | Auto-archive stale skills (background maintenance) | `hello_agent/skills/curator.py` (v0.6+) | Out of scope for v0.1. |
+
+### 5.10 Windows-specific
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `scripts/install.ps1` | Windows native install (uv, Python 3.11, Node.js, MinGit) | `scripts/dev_bootstrap.ps1` | Drop MinGit (we don't need bash). Keep uv + Python + Node. |
+| (no hermes equivalent — Hermes has no tray icon) | pystray tray menu | `hello_agent/windows/tray.py` | **NEW**. See §7.5. |
+| (no hermes equivalent) | HKCU\...\Run autostart | `hello_agent/windows/autostart.py` | **NEW**. See §7.5. |
+| (no hermes equivalent) | Environment probe | `hello_agent/windows/env.py` | **NEW**. `hello-agent doctor` calls this. |
+
+### 5.11 CLI
+
+| Hermes file | Pattern | hello-agent file | Changes |
+|---|---|---|---|
+| `hermes_cli/main.py` | Typer-based CLI with subcommand wiring | `hello_agent/cli/main.py` | New, much smaller (~200 LOC). |
+| `hermes_cli/commands.py` (COMMAND_REGISTRY) | Data-driven command registry | `hello_agent/cli/commands.py` (v0.3+) | Defer to v0.3. v0.1: hard-coded subcommands. |
+| (no hermes equivalent — Hermes has gateway but not web) | FastAPI server for Web UI | `hello_agent/web/server.py` | **NEW**. See §7.4. |
+
+### 5.12 What to SKIP from hermes-agent
+
+These are explicit non-goals for v0.1. Mentioning them so Codex doesn't accidentally re-implement them:
+
+- `gateway/` directory (Telegram/Discord/Slack bots) — v0.1 has no IM. v1.0+ can add.
+- `ui-tui/` (React Ink TUI in Node.js) — we use Web UI (FastAPI + React) instead. Different stack, similar feel.
+- `tui_gateway/` (Python JSON-RPC backend for the TUI) — N/A.
+- `apps/desktop/` (Electron) — we use pystray + browser instead.
+- `acp_adapter/` (VS Code / Zed / JetBrains ACP) — defer to v1.0.
+- `infographic/`, `datagen-config-examples/`, `kanban/` — internal Hermes R&D tools, not for hello-agent.
+- `hermes-already-has-routines.md`, `mini_swe_runner.py`, `batch_runner.py`, `trajectory_compressor.py` — Hermes-specific dev tools, not relevant.
+- The full plugin system (PluginManager, plugins/ directory) — we have a simpler "drop a .py in `~/.hello_agent/plugins/`" loader, that's it.
+- `agent/display.py` KawaiiSpinner — we use rich.progress.
+- All 8 memory provider plugins (honcho, mem0, supermemory, byterover, hindsight, holographic, openviking, retaindb) — we use Obsidian+Git as our memory backend.
+- Honcho dialectic user modeling — out of scope.
+- `agent/curator.py` skill auto-curation — v0.6+.
+
+### 5.13 What hello-agent ADDS beyond hermes
+
+Codex should not try to find these in hermes-agent — they don't exist there. They're hello-agent-only:
+
+1. **Obsidian + Git memory backend** (§7.3) — the user's signature feature
+2. **Document parser chain** (MinerU + markitdown + text fallback) (§7.1)
+3. **4-strategy advanced RAG** (query_rewrite / hyde / multi_query / rerank) (§7.2)
+4. **Pystray system tray icon** (§7.5)
+5. **Web UI (FastAPI + React)** — Hermes has a TUI and Electron app; we use a much simpler Web UI
+6. **No gateway, no multi-platform IM** — the v0.1 product surface is intentionally narrower
+
+---
+
+(End of part 2. See docs/ENGINEERING.md for parts 3+.)
+
+
+---
+
+## 6. Per-Module Code Specs
+
+This section gives enough detail for Codex to write each file. For files
+that are 1:1 copies of hermes patterns, the spec is brief — "go read
+hermes-agent X, copy it, rename Y". For files that are net-new, the
+spec is more detailed.
+
+### 6.1 `hello_agent/__init__.py`, `__main__.py`
+
+**`__init__.py`** — minimal:
+```python
+"""hello-agent — personal Windows Python agent."""
+__version__ = "0.1.0"
+```
+
+**`__main__.py`** — one line:
+```python
+from hello_agent.cli.main import main
+if __name__ == "__main__":
+    main()
+```
+
+### 6.2 `hello_agent/core/`
+
+#### `hello_agent/core/paths.py`
+
+Profile-aware home directory. Borrowed from `hermes_constants.py`.
+
+```python
+# Imports
+import os
+from pathlib import Path
+from typing import Optional
+
+# Constants
+APP_NAME = "hello-agent"  # not "hello_agent" — Windows-safe dir name
+DEFAULT_HOME_POSIX = Path.home() / f".{APP_NAME}"
+DEFAULT_HOME_WINDOWS = Path(os.environ.get("LOCALAPPDATA", Path.home())) / APP_NAME
+PROFILE_ENV_VAR = "HELLO_AGENT_PROFILE"
+
+# Public API
+def get_hello_agent_home() -> Path:
+    """Return the current profile's home directory.
+
+    Resolution order:
+    1. $HELLO_AGENT_HOME env var (explicit override, e.g. for tests)
+    2. $HELLO_AGENT_PROFILE → ~/.hello-agent/profiles/<name>/ (if set)
+    3. Platform default (LOCALAPPDATA on Windows, ~/.hello-agent elsewhere)
+    """
+    ...
+
+def display_hello_agent_home() -> str:
+    """Same as get_hello_agent_home() but shows '~/.hello-agent' for the
+    default profile, '~/.hello-agent/profiles/<name>' otherwise.
+    Used in user-facing log messages.
+    """
+    ...
+
+def _apply_profile_override() -> None:
+    """Module-level side effect: reads $HELLO_AGENT_PROFILE and
+    $HELLO_AGENT_HOME at import time, sets the canonical env var.
+    MUST run before any other hello_agent module imports Path
+    constants. Called from hello_agent/__init__.py.
+    """
+    ...
+
+def ensure_home() -> Path:
+    """get_hello_agent_home() + mkdir(parents=True, exist_ok=True).
+    Returns the path.
+    """
+    ...
+```
+
+**Acceptance**:
+- `get_hello_agent_home()` on Windows with no env set returns `C:\Users\<user>\AppData\Local\hello-agent\`
+- `HELLO_AGENT_PROFILE=coder` → `C:\Users\<user>\AppData\Local\hello-agent\profiles\coder\`
+- Calling `ensure_home()` creates the directory
+
+#### `hello_agent/core/config.py`
+
+`pydantic-settings` based config loader. Merges `~/.hello-agent/config.yaml` + `.env`.
+
+```python
+# Imports
+import os
+from pathlib import Path
+from typing import Any, Optional, Literal
+import yaml
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Sub-models (mirror §4.3 config.yaml structure)
+class AgentConfig(BaseModel):
+    default_type: Literal["simple", "react", "plan_solve", "reflection"] = "react"
+    max_iterations: int = 30
+    max_cost_per_turn_usd: float = 0.50
+    enable_memory_recall: bool = True
+    enable_rag: bool = True
+    memory_top_k: int = 5
+    rag_top_k: int = 8
+
+class TerminalConfig(BaseModel):
+    cwd: Optional[Path] = None
+    shell_timeout_seconds: int = 60
+    shell_max_output_bytes: int = 50_000
+
+class MemoryConfig(BaseModel):
+    short_term_max_messages: int = 50
+    episodic_summarize_every_n_turns: int = 20
+    obsidian_vault_path: Optional[Path] = None
+    obsidian_git_repo: str = "peckerpro/hello-agent-memory"
+    obsidian_git_token: Optional[str] = None
+    obsidian_auto_commit_minutes: int = 5
+    obsidian_auto_push_minutes: int = 15
+
+class RagConfig(BaseModel):
+    default_strategy: Literal["rewrite", "hyde", "multi_query", "rerank"] = "rewrite"
+    chunk_size_tokens: int = 512
+    chunk_overlap_tokens: int = 64
+    embedding_provider: Literal["openai", "local"] = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+    chromadb_persist_dir: Path = Path("./data/chromadb")
+
+class ToolsConfig(BaseModel):
+    enabled: list[str] = Field(default_factory=lambda: [
+        "file_tools", "shell_tool", "web_search", "web_fetch",
+        "document_parser", "todowrite", "notify"
+    ])
+    disabled: list[str] = Field(default_factory=list)
+    require_confirmation: list[str] = Field(default_factory=lambda: [
+        "shell_tool.run_powershell", "shell_tool.run_cmd",
+        "file_tools.write_file", "file_tools.edit_file"
+    ])
+
+class ContextConfig(BaseModel):
+    max_context_tokens: int = 128_000
+    response_reserve_tokens: int = 4_000
+    summarize_after_tokens: int = 100_000
+    truncator_strategy: Literal["head_tail", "middle_out", "summarize"] = "head_tail"
+    truncator_head_lines: int = 50
+    truncator_tail_lines: int = 20
+
+class LoggingConfig(BaseModel):
+    level: str = "INFO"
+    console_pretty: bool = True
+
+class TracingConfig(BaseModel):
+    enabled: bool = True
+    export_json: bool = True
+    export_dir: Path = Path("~/.hello-agent/traces").expanduser()
+
+# Main config model
+class HelloAgentConfig(BaseModel):
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    terminal: TerminalConfig = Field(default_factory=TerminalConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    rag: RagConfig = Field(default_factory=RagConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    context: ContextConfig = Field(default_factory=ContextConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
+
+# Env-var settings (secrets + deployment overrides)
+class EnvSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="", env_file=".env", env_file_encoding="utf-8")
+
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    llm_aux_model: str = "gpt-4o-mini"
+    llm_vision_model: str = "gpt-4o"
+    llm_timeout_seconds: int = 60
+    llm_max_retries: int = 3
+
+    mineru_api_key: str = ""
+    mineru_base_url: str = "https://mineru.net/api/v4"
+    mineru_model: str = "MinerU2.5Pro"
+
+    web_host: str = "127.0.0.1"
+    web_port: int = 8648
+    web_open_browser_on_start: bool = True
+
+# Public API
+def load_config(config_path: Optional[Path] = None) -> HelloAgentConfig:
+    """Load config.yaml (if present) + merge with env-var overrides.
+    Returns a fully-validated HelloAgentConfig instance.
+    """
+    yaml_path = config_path or (get_hello_agent_home() / "config.yaml")
+    if yaml_path.exists():
+        with yaml_path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {}
+    # Env vars override file (for fields that aren't in .env: handled by EnvSettings)
+    return HelloAgentConfig(**data)
+
+def load_env() -> EnvSettings:
+    """Load .env (delegated to pydantic-settings)."""
+    return EnvSettings()
+
+# Module-level singleton
+_config: Optional[HelloAgentConfig] = None
+_env: Optional[EnvSettings] = None
+
+def get_config() -> HelloAgentConfig:
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
+def get_env() -> EnvSettings:
+    global _env
+    if _env is None:
+        _env = load_env()
+    return _env
+
+def reload_config() -> HelloAgentConfig:
+    """Force re-read from disk. Called by /reload slash command."""
+    global _config, _env
+    _config = None
+    _env = None
+    return get_config()
+```
+
+**Acceptance**:
+- `get_config()` returns a populated `HelloAgentConfig` with all defaults
+- `~/.hello-agent/config.yaml` overrides defaults when present
+- `.env` overrides both for fields in `EnvSettings`
+- Missing required fields raise a clear validation error
+
+#### `hello_agent/core/llm.py`
+
+OpenAI-compatible LLM client. Wraps the official `openai` SDK.
+
+```python
+# Imports
+import time
+from typing import Any, AsyncIterator, Iterator, Optional
+from openai import OpenAI, AsyncOpenAI
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter, retry_if_exception_type
+from hello_agent.core.config import get_env
+from hello_agent.core.types import Message, ToolDefinition
+from hello_agent.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+# Public API
+class LLMClient:
+    """Synchronous + async OpenAI-compatible LLM client.
+
+    Used by all agent types. One instance per (base_url, api_key) tuple,
+    cached at module level. Streaming supported via stream=True param.
+    """
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout_seconds: Optional[int] = None,
+        max_retries: Optional[int] = None,
+    ):
+        env = get_env()
+        self.base_url = base_url or env.llm_base_url
+        self.api_key = api_key or env.llm_api_key
+        self.model = model or env.llm_model
+        self.timeout = timeout_seconds or env.llm_timeout_seconds
+        self.max_retries = max_retries or env.llm_max_retries
+
+        self._sync = OpenAI(
+            base_url=self.base_url,
+            api_key=self._sanitize_key(self.api_key),
+            timeout=self.timeout,
+            max_retries=0,  # we handle retries ourselves
+        )
+        self._async = AsyncOpenAI(
+            base_url=self.base_url,
+            api_key=self._sanitize_key(self.api_key),
+            timeout=self.timeout,
+            max_retries=0,
+        )
+
+    @staticmethod
+    def _sanitize_key(key: str) -> str:
+        """If key is empty/None, raise with helpful message at first call,
+        not at __init__ — so the import-time path doesn't fail for users
+        who only run `hello-agent doctor`."""
+        if not key:
+            raise ValueError(
+                "LLM_API_KEY is empty. Set it in .env or via env var. "
+                "Run `hello-agent doctor` for the full env checklist."
+            )
+        return key
+
+    @property
+    def provider_name(self) -> str:
+        """Auto-detect provider from base_url for logging.
+        Returns one of: openai | deepseek | zhipu | ollama | moonshot | unknown
+        """
+        url = self.base_url.lower()
+        if "deepseek" in url: return "deepseek"
+        if "bigmodel" in url: return "zhipu"
+        if "moonshot" in url or "kimi" in url: return "moonshot"
+        if "ollama" in url or "localhost" in url or "127.0.0.1" in url: return "local"
+        if "openai.com" in url: return "openai"
+        return "unknown"
+
+    def chat(
+        self,
+        messages: list[Message],
+        tools: Optional[list[ToolDefinition]] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+    ) -> ChatCompletion | Iterator[ChatCompletionChunk]:
+        """Sync chat completion. With stream=True returns an iterator."""
+        ...
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential_jitter(initial=1, max=10),
+        retry=retry_if_exception_type((TimeoutError, ConnectionError)),
+        reraise=True,
+    )
+    def _chat_with_retry(self, **kwargs) -> ChatCompletion:
+        ...
+
+    async def achat(
+        self,
+        messages: list[Message],
+        tools: Optional[list[ToolDefinition]] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+    ) -> ChatCompletion | AsyncIterator[ChatCompletionChunk]:
+        """Async version. Used by Web UI for SSE streaming."""
+        ...
+
+    def count_tokens(self, messages: list[Message]) -> int:
+        """Estimate token count using tiktoken.
+        Uses cl100k_base for unknown models (rough estimate).
+        """
+        # See hello_agent/context/token_counter.py — this just delegates.
+        ...
+```
+
+**Notes for Codex**:
+- Use `tenacity` for retries (already in deps). Catch only transient errors, not 4xx.
+- Streaming: return `openai` SDK's iterator directly; do not buffer.
+- For tool calling, the `tools` param is `list[ToolDefinition]` (our type); convert to OpenAI's format inside.
+- v0.1 doesn't need response caching — Hermes has it via `agent/caching.py`; defer.
+
+#### `hello_agent/core/types.py`
+
+Core data types.
+
+```python
+# Imports
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Literal, Optional, Union
+
+# Message roles
+class Role(str, Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+# Message
+@dataclass
+class Message:
+    role: Role
+    content: Optional[str] = None
+    # Tool-related (only for assistant with tool_calls, or tool with tool_call_id)
+    tool_calls: Optional[list["ToolCall"]] = None
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None  # for tool messages
+    # Metadata
+    name: Optional[str] = None  # for multi-user scenarios
+    timestamp: float = field(default_factory=lambda: __import__("time").time())
+    # Token accounting
+    token_count: Optional[int] = None
+    finish_reason: Optional[str] = None
+    # Reasoning content (for o1, o3, etc.)
+    reasoning: Optional[str] = None
+    # Cache control
+    cache_breakpoint: bool = False
+
+# Tool call (assistant requests)
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+# Tool result (tool response)
+@dataclass
+class ToolResult:
+    tool_call_id: str
+    content: str  # stringified JSON
+    is_error: bool = False
+    # For long outputs
+    truncated: bool = False
+    full_output_path: Optional[str] = None  # if output was saved to a file
+
+# Tool definition (sent to LLM)
+@dataclass
+class ToolDefinition:
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON Schema
+    # Whether the tool requires user confirmation before running
+    requires_confirmation: bool = False
+
+# ToolResponse — see §6.4 / §7.1
+@dataclass
+class ToolResponse:
+    success: bool
+    data: Any = None
+    error: Optional[str] = None
+    hint: Optional[str] = None
+
+    def to_json(self) -> str:
+        ...
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> "ToolResponse":
+        return cls(success=False, error=f"{type(exc).__name__}: {exc}")
+
+# Agent state
+@dataclass
+class AgentState:
+    session_id: str
+    messages: list[Message]
+    # Loop control
+    iteration: int = 0
+    max_iterations: int = 30
+    interrupted: bool = False
+    # Budget
+    spent_usd: float = 0.0
+    max_cost_per_turn_usd: float = 0.50
+    # Tracing
+    trace_id: Optional[str] = None
+```
+
+**Acceptance**:
+- All dataclasses are JSON-serializable (use `dataclasses.asdict` + `json.dumps` for persistence)
+- `Message.tool_calls` is mutually exclusive with `Message.content` for assistant messages (OpenAI convention)
+
+#### `hello_agent/core/logging.py`
+
+Loguru setup. Replaces `hermes_logging.py` (which uses stdlib logging).
+
+```python
+# Imports
+import sys
+from pathlib import Path
+from loguru import logger
+from hello_agent.core.paths import get_hello_agent_home
+from hello_agent.core.config import get_config
+
+_CONFIGURED = False
+
+def setup_logging() -> None:
+    """Configure loguru sinks:
+    - Console (with rich-style coloring)
+    - agent.log (INFO+, rotated 10MB, 5 backups)
+    - errors.log (WARNING+, rotated 10MB, 5 backups)
+    - tools.log (tool call audit trail)
+    - llm.log (LLM request/response audit, redact secrets)
+    Idempotent: re-running is a no-op.
+    """
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    cfg = get_config().logging
+    home = get_hello_agent_home()
+    log_dir = home / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Remove default sink
+    logger.remove()
+
+    # Console
+    if cfg.console_pretty:
+        logger.add(
+            sys.stderr,
+            level=cfg.level,
+            format=("<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | "
+                    "<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"),
+        )
+    else:
+        logger.add(sys.stderr, level=cfg.level)
+
+    # File sinks
+    logger.add(log_dir / "agent.log", level="INFO", rotation="10 MB", retention=5, encoding="utf-8")
+    logger.add(log_dir / "errors.log", level="WARNING", rotation="10 MB", retention=5, encoding="utf-8")
+    logger.add(log_dir / "tools.log", level="INFO", rotation="10 MB", retention=5,
+               filter=lambda record: "tool" in record["extra"].get("category", ""))
+    logger.add(log_dir / "llm.log", level="INFO", rotation="10 MB", retention=5,
+               filter=lambda record: "llm" in record["extra"].get("category", ""))
+
+    _CONFIGURED = True
+
+def get_logger(name: str):
+    """Return a bound logger with the given name."""
+    return logger.bind(module=name)
+```
+
+**Acceptance**:
+- `get_logger("hello_agent.agents.react")` works
+- Log files rotate at 10MB
+- `llm.log` only contains LLM-category events (use `logger.bind(category="llm").info(...)`)
+
+#### `hello_agent/core/state.py`
+
+SQLite + FTS5 + trigram session store. **1:1 borrow from `hermes_state.py`** with these specific changes:
+
+- Rename `state.db` → `hello_agent.db`
+- Add 3 new tables: `memories`, `episodes`, `tools_calls_log` (see §6.6)
+- Drop the `compression_locks` table (Hermes uses this for mid-turn context compression, which we defer to v0.3+)
+- Drop `parent_session_id` chain logic (v0.1: each session is independent; no compression splits)
+- Drop the `handoff_*` columns from `sessions` (no rotation in v0.1)
+- Drop the `kanban` integration entirely
+- Keep: WAL with NFS fallback, FTS5 + trigram, declarative schema reconciliation, `BEGIN IMMEDIATE` + jitter retry
+
+**File length budget**: ~1500 LOC (vs hermes_state.py's 1900 LOC — we're dropping ~25%).
+
+#### `hello_agent/core/exceptions.py`
+
+```python
+class HelloAgentError(Exception):
+    """Base for all hello-agent errors."""
+
+class ConfigError(HelloAgentError): pass
+class LLMError(HelloAgentError): pass
+class LLMTimeoutError(LLMError): pass
+class LLMAuthError(LLMError): pass
+class LLMRateLimitError(LLMError): pass
+class ToolError(HelloAgentError):
+    def __init__(self, tool_name: str, message: str):
+        self.tool_name = tool_name
+        super().__init__(f"{tool_name}: {message}")
+class ToolNotFoundError(ToolError): pass
+class ToolPermissionDeniedError(ToolError): pass
+class CircuitOpenError(ToolError): pass
+class MemoryError(HelloAgentError): pass
+class RetrievalError(HelloAgentError): pass
+class ObsidianSyncError(MemoryError): pass
+class ContextLengthExceededError(LLMError): pass
+class AgentInterruptedError(HelloAgentError): pass
+```
+
+### 6.3 `hello_agent/agents/`
+
+#### `hello_agent/agents/base.py`
+
+The `Agent` ABC.
+
+```python
+# Imports
+from abc import ABC, abstractmethod
+from hello_agent.core.types import AgentState, Message, ToolDefinition
+from hello_agent.core.llm import LLMClient
+from hello_agent.tools.registry import ToolRegistry
+
+class Agent(ABC):
+    """Base class for all agent types."""
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        tool_registry: ToolRegistry,
+        system_prompt: str,
+        max_iterations: int = 30,
+        max_cost_per_turn_usd: float = 0.50,
+        session_id: str | None = None,
+    ):
+        self.llm = llm
+        self.tool_registry = tool_registry
+        self.system_prompt = system_prompt
+        self.max_iterations = max_iterations
+        self.max_cost_per_turn_usd = max_cost_per_turn_usd
+        self.session_id = session_id or self._generate_session_id()
+
+    @abstractmethod
+    def step(self, state: AgentState) -> AgentState:
+        """One step of the agent loop. Subclasses define the strategy.
+        Returns the updated state.
+        """
+        ...
+
+    def run(self, user_message: str) -> AgentState:
+        """Main entry: take user message, run loop until done, return final state."""
+        state = AgentState(
+            session_id=self.session_id,
+            messages=[Message(role=Role.USER, content=user_message)],
+            max_iterations=self.max_iterations,
+            max_cost_per_turn_usd=self.max_cost_per_turn_usd,
+        )
+        # Append system prompt
+        state.messages.insert(0, Message(role=Role.SYSTEM, content=self.system_prompt))
+
+        while state.iteration < state.max_iterations:
+            if state.interrupted:
+                break
+            state = self.step(state)
+            state.iteration += 1
+            if self._is_terminal(state):
+                break
+        return state
+
+    def _is_terminal(self, state: AgentState) -> bool:
+        """Override in subclasses. Default: no tool calls in last message = done."""
+        if not state.messages:
+            return True
+        last = state.messages[-1]
+        return last.role == Role.ASSISTANT and not last.tool_calls
+
+    def _generate_session_id(self) -> str:
+        import uuid
+        return str(uuid.uuid4())
+```
+
+#### `hello_agent/agents/simple.py`
+
+Single-shot LLM call. No tools. No loop.
+
+```python
+class SimpleAgent(Agent):
+    def step(self, state: AgentState) -> AgentState:
+        response = self.llm.chat(state.messages, tools=None)
+        msg = Message(
+            role=Role.ASSISTANT,
+            content=response.choices[0].message.content,
+            finish_reason=response.choices[0].finish_reason,
+            token_count=response.usage.total_tokens if response.usage else None,
+        )
+        state.messages.append(msg)
+        return state
+```
+
+#### `hello_agent/agents/react.py`
+
+ReAct loop. Reasoning + Acting. **DEFAULT agent type**.
+
+```python
+class ReActAgent(Agent):
+    """Reasoning + Acting loop.
+    Each iteration: think (call LLM) → act (call tools) → observe → repeat.
+    Borrow the loop shape from hermes run_agent.py, simplified.
+    """
+    def step(self, state: AgentState) -> AgentState:
+        # 1. Call LLM with current messages + available tools
+        tools = self.tool_registry.list_tool_definitions(enabled_only=True)
+        response = self.llm.chat(
+            messages=state.messages,
+            tools=tools,
+        )
+        assistant_msg = response.choices[0].message
+
+        # 2. Append assistant message (may include tool_calls)
+        state.messages.append(Message(
+            role=Role.ASSISTANT,
+            content=assistant_msg.content,
+            tool_calls=[ToolCall(**tc.model_dump()) for tc in (assistant_msg.tool_calls or [])],
+            finish_reason=assistant_msg.finish_reason,
+            token_count=response.usage.total_tokens if response.usage else None,
+        ))
+
+        # 3. If no tool calls, we're done
+        if not assistant_msg.tool_calls:
+            return state
+
+        # 4. Execute each tool call, append Tool message
+        for tc in assistant_msg.tool_calls:
+            result = self._dispatch_tool(tc, state)
+            state.messages.append(Message(
+                role=Role.TOOL,
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                content=result.content if hasattr(result, "content") else json.dumps(result),
+            ))
+
+        return state
+
+    def _dispatch_tool(self, tc: ToolCall, state: AgentState) -> ToolResult:
+        """Permission check + circuit breaker + dispatch."""
+        from hello_agent.tools.permission import check_permission
+        from hello_agent.tools.circuit_breaker import check_breaker
+
+        if not check_permission(tc.name, self.session_id):
+            return ToolResult(
+                tool_call_id=tc.id,
+                content=json.dumps({"error": "Permission denied", "tool": tc.name}),
+                is_error=True,
+            )
+        if not check_breaker(tc.name):
+            return ToolResult(
+                tool_call_id=tc.id,
+                content=json.dumps({"error": "Circuit open (too many recent failures)"}),
+                is_error=True,
+            )
+        try:
+            return self.tool_registry.execute(tc.name, tc.arguments, session_id=self.session_id)
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=tc.id,
+                content=json.dumps({"error": f"{type(e).__name__}: {e}"}),
+                is_error=True,
+            )
+```
+
+#### `hello_agent/agents/plan_solve.py` and `reflection.py`
+
+Both are thin subclasses of `ReActAgent` with overridden orchestration:
+
+- `PlanAndSolveAgent.run()`: first call LLM with "plan this task" prompt → get a list of steps → execute each step as a ReAct sub-iteration. See datawhale Hello-Agents chapter 4 spec.
+- `ReflectionAgent.run()`: standard ReAct, then on completion, call LLM with "review your work" prompt → if issues found, iterate.
+
+#### `hello_agent/agents/router.py`
+
+```python
+class TaskRouter:
+    """Classify a user message and dispatch to the right agent type.
+    v0.1: rule-based (keyword matching). v0.3+: cheap LLM classifier call.
+    """
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    def route(self, user_message: str) -> Literal["simple", "react", "plan_solve", "reflection"]:
+        msg = user_message.lower()
+        if len(msg) < 50 and not any(kw in msg for kw in ["然后", "再", "and then", "step"]):
+            return "simple"
+        if "规划" in msg or "plan" in msg.split() or "step by step" in msg:
+            return "plan_solve"
+        if "检查" in msg or "review" in msg or "反思" in msg:
+            return "reflection"
+        return "react"  # default
+```
+
+### 6.4 `hello_agent/tools/`
+
+#### `hello_agent/tools/registry.py`
+
+Tool auto-discovery + dispatch. **1:1 borrow from hermes `tools/registry.py`**, with:
+- Add `dangerous_op` flag to `register()` for tools that need confirmation
+- Add per-session confirmation cache
+
+```python
+# Imports
+from typing import Any, Callable, Optional
+from dataclasses import dataclass, field
+from hello_agent.core.types import ToolDefinition, ToolResponse, ToolResult
+from hello_agent.core.exceptions import ToolNotFoundError, ToolPermissionDeniedError
+
+@dataclass
+class _RegisteredTool:
+    name: str
+    toolset: str
+    schema: ToolDefinition
+    handler: Callable[..., ToolResponse]
+    check_fn: Optional[Callable[[], bool]] = None
+    requires_env: list[str] = field(default_factory=list)
+    dangerous: bool = False
+
+class ToolRegistry:
+    def __init__(self):
+        self._tools: dict[str, _RegisteredTool] = {}
+        self._toolsets: dict[str, list[str]] = {}  # toolset_name → tool_names
+        self._enabled: set[str] = set()
+        self._confirmation_cache: dict[str, set[str]] = {}  # session_id → confirmed_tool_names
+
+    def register(self, name, toolset, schema, handler, check_fn=None, requires_env=None, dangerous=False):
+        ...
+
+    def register_toolset(self, name: str, tool_names: list[str], inherits_from: Optional[list[str]] = None):
+        ...
+
+    def enable(self, tool_names: list[str]): ...
+    def disable(self, tool_names: list[str]): ...
+    def is_enabled(self, tool_name: str) -> bool: ...
+
+    def list_tool_definitions(self, enabled_only: bool = True) -> list[ToolDefinition]:
+        """Return JSON-serializable tool definitions for the LLM."""
+        ...
+
+    def execute(self, name: str, arguments: dict, session_id: Optional[str] = None) -> ToolResult:
+        """Execute a tool, returning a ToolResult.
+        Raises ToolNotFoundError if not registered.
+        Raises ToolPermissionDeniedError if dangerous and not confirmed.
+        """
+        ...
+
+    def confirm_dangerous(self, session_id: str, tool_name: str) -> None:
+        """User has confirmed running this dangerous tool in this session."""
+        self._confirmation_cache.setdefault(session_id, set()).add(tool_name)
+```
+
+#### `hello_agent/tools/response.py`
+
+```python
+# Already specified in §6.2 (ToolResponse dataclass).
+# Plus: convenience constructors
+class ToolResponse:
+    @classmethod
+    def ok(cls, data: Any) -> "ToolResponse":
+        return cls(success=True, data=data)
+
+    @classmethod
+    def fail(cls, error: str, hint: Optional[str] = None) -> "ToolResponse":
+        return cls(success=False, error=error, hint=hint)
+```
+
+#### `hello_agent/tools/circuit_breaker.py`
+
+```python
+import time
+from collections import deque
+from threading import Lock
+
+class CircuitBreaker:
+    """Per-tool circuit breaker.
+    After N consecutive failures within window_seconds, the circuit
+    "opens" for cooldown_seconds, during which calls are rejected
+    immediately. After cooldown, "half-open" allows one trial call;
+    success → close, failure → re-open.
+    """
+    def __init__(self, fail_threshold: int = 5, window_seconds: float = 60, cooldown_seconds: float = 30):
+        self.fail_threshold = fail_threshold
+        self.window_seconds = window_seconds
+        self.cooldown_seconds = cooldown_seconds
+        self._state: dict[str, dict] = {}  # tool_name → {failures, opened_at, state}
+        self._lock = Lock()
+
+    def record_success(self, tool_name: str): ...
+    def record_failure(self, tool_name: str): ...
+    def allow(self, tool_name: str) -> bool: ...
+
+# Module-level singleton breaker
+_breaker = CircuitBreaker()
+
+def check_breaker(tool_name: str) -> bool:
+    return _breaker.allow(tool_name)
+
+def record_success(tool_name: str):
+    _breaker.record_success(tool_name)
+
+def record_failure(tool_name: str):
+    _breaker.record_failure(tool_name)
+```
+
+#### `hello_agent/tools/permission.py`
+
+```python
+# Reads ToolsConfig.require_confirmation. Per-session approval cache.
+# Returns True if tool is OK to run.
+def check_permission(tool_name: str, session_id: str) -> bool: ...
+def confirm_in_session(session_id: str, tool_name: str) -> None: ...
+```
+
+#### `hello_agent/tools/builtin/document_parser.py`
+
+See §7.1 for full spec.
+
+#### `hello_agent/tools/builtin/file_tools.py`
+
+```python
+# Tools provided:
+#   read_file(path: str, max_bytes: int = 1_000_000) -> str
+#   write_file(path: str, content: str) -> str
+#   edit_file(path: str, old: str, new: str) -> str  # uses optimistic lock
+#
+# Borrow from hermes tools/file.py:
+# - ReadTool: path validation (no ../..), max_bytes truncation
+# - WriteTool: parent dir creation, atomic write via tempfile + rename
+# - EditTool: optimistic lock via file mtime, retry on conflict
+#
+# All three return ToolResponse with content as the "data" field.
+# WriteTool and EditTool are marked dangerous=True (need confirmation).
+```
+
+#### `hello_agent/tools/builtin/shell_tool.py`
+
+```python
+# Tools provided:
+#   run_powershell(command: str, timeout_seconds: int = 60) -> str
+#   run_cmd(command: str, timeout_seconds: int = 60) -> str  # cmd.exe fallback
+#
+# Implementation:
+# - Use subprocess.run with timeout
+# - On Windows: prefer PowerShell, fall back to cmd.exe
+# - Capture stdout + stderr, return combined (with prefixes)
+# - Truncate output at shell_max_output_bytes (config)
+# - Marked dangerous=True
+```
+
+#### `hello_agent/tools/builtin/web_search.py`, `web_fetch.py`
+
+```python
+# web_search:
+#   search(query: str, max_results: int = 5) -> list[dict]
+#   Returns: [{"title", "url", "snippet"}]
+# v0.1 backends: SearXNG (self-hosted, free) or DuckDuckGo HTML (no key)
+#
+# web_fetch:
+#   fetch(url: str, max_bytes: int = 1_000_000) -> str
+#   Returns: markdown-formatted page content
+# Implementation: httpx + selectolax for readability extraction
+```
+
+#### `hello_agent/tools/builtin/todowrite.py`, `task_tool.py`, `notify.py`
+
+```python
+# todowrite (agent-level, intercepted before handle_function_call like in hermes):
+#   todowrite(items: list[dict]) -> str
+#   Each item: {id, content, status, active_form}
+#
+# task_tool (subagent delegation):
+#   delegate_task(goal: str, role: str = "leaf") -> str
+#   Returns the subagent's final response
+#
+# notify (Windows toast):
+#   notify(title: str, body: str) -> str
+#   Uses windows-toasts library on Windows; no-op elsewhere
+```
+
+### 6.5 `hello_agent/context/`
+
+#### `context/history.py`, `token_counter.py`, `truncator.py`, `builder.py`
+
+Brief specs (Codex should read hermes equivalents and adapt):
+
+- `history.py`: in-memory list of `Message` objects with a sliding window. The windowing logic mirrors `agent/history_manager.py`. Persistence is via `core/state.py` (don't duplicate storage).
+- `token_counter.py`: `count_tokens(messages) -> int`. Uses `tiktoken.encoding_for_model(self.llm.model)`, falling back to `cl100k_base` for non-OpenAI models, with a final heuristic `len(content) / 4` for non-string content.
+- `truncator.py`: `truncate(message: Message, max_lines: int, strategy: str) -> Message`. Head-tail keeps first N and last M lines, middle replaces with `[... N lines truncated ...]`. Summarize (v0.3+) calls LLM.
+- `builder.py`: `build_prompt(state: AgentState, available_tools: list[ToolDefinition], memory_chunks: list[str], rag_chunks: list[str]) -> list[Message]`. The output goes to the LLM. Order: system_prompt → memory_chunks (as "system note" before history) → past messages → RAG chunks (last user message's context).
+
+### 6.6 `hello_agent/memory/`
+
+See §7.3 for the **Obsidian + Git sync** detailed spec.
+
+Brief spec for the other modules:
+
+- `short_term.py`: in-memory dict of facts added during the session, accessible by name. API: `add_fact(name, value)`, `get_fact(name)`, `list_facts()`. Cleared on session end (unless explicitly `persist()`).
+- `long_term.py`: SQLite-backed key-value store. Schema: `memories(id, kind, name, content, embedding BLOB, created_at, last_accessed_at, access_count, source_session_id, obsidian_path)`. Kinds: `fact | preference | project_context | skill_state`. Provides semantic search via the `embedding` column (cosine similarity via numpy).
+- `episodic.py`: list of past task summaries. Each session-end, write a 1-3 sentence summary to the `episodes` table. Recalled via FTS5 + semantic.
+- `obsidian_sync.py`: see §7.3.
+- `git_sync.py`: see §7.3.
+
+### 6.7 `hello_agent/rag/`
+
+See §7.2 for **4-strategy advanced retrieval** detailed spec.
+
+- `loader.py`: file extension dispatch. See §7.2.1.
+- `chunker.py`: sliding window with paragraph-aware boundaries. See §7.2.2.
+- `embedder.py`: `embed(texts: list[str]) -> list[list[float]]`. Two backends: OpenAI + local. See §7.2.3.
+- `vector_store.py`: chromadb wrapper. `add(chunks, embeddings, metadatas)`, `query(embedding, top_k)`, `delete(ids)`, `count()`.
+- `retrieval.py`: the 4-strategy pipeline. See §7.2.4.
+- `index_cli.py`: `hello-agent rag index <path>` walks a directory, chunks + embeds + stores. `hello-agent rag query <text>` runs the retrieval pipeline.
+
+### 6.8 `hello_agent/protocols/`
+
+#### `mcp_client.py` and `mcp_server.py`
+
+Use the `mcp==1.26.0` SDK. Both borrow from `hermes mcp_serve.py` + `agent/mcp_client.py`.
+
+- `mcp_client.py`: `connect(command: list[str], name: str)` spawns the MCP server as a subprocess, lists tools, returns a `ToolRegistry` augmented with those tools. v0.1: stdio only.
+- `mcp_server.py`: `serve(registry: ToolRegistry)` runs an MCP stdio server that exposes all of the registry's tools. Used by `hello-agent mcp serve` subcommand.
+
+### 6.9 `hello_agent/observability/`
+
+#### `tracer.py` and `metrics.py`
+
+- `tracer.py`: `Tracer` class with `start_run()`, `start_step(name)`, `end_step(output)`, `end_run()`. Pretty-prints via `rich.tree.Tree` to console. Exports JSON to `~/.hello-agent/traces/<session_id>_<timestamp>.json` if `tracing.export_json` is true.
+- `metrics.py`: reads from `state.db` (sessions, messages tables) and produces:
+  - Per-session token totals (input/output/cache_read/cache_write/reasoning)
+  - Per-tool call counts + average latency
+  - Cost estimates (using a simple price table keyed by model name; users can override in config)
+
+### 6.10 `hello_agent/skills/`
+
+#### `loader.py`
+
+Borrow from `hermes agent/skill_commands.py`. Scans `~/.hello-agent/skills/*.md` + `hello_agent/skills/builtin/*.md`. Each SKILL.md is loaded on demand and injected as a user message (preserves prompt caching — same as hermes).
+
+```python
+@dataclass
+class Skill:
+    name: str
+    description: str  # ≤ 60 chars
+    version: str
+    author: str
+    license: str
+    platforms: list[str]
+    tags: list[str]
+    category: str
+    related_skills: list[str]
+    body: str  # full markdown
+    path: Path  # source path
+
+def load_skill(name: str) -> Skill: ...
+def list_skills() -> list[Skill]: ...
+def get_skill_command_prompt(skill_name: str) -> str:
+    """Return the user message to inject when /<skill-name> is invoked."""
+    skill = load_skill(skill_name)
+    return f"The user has invoked the `{skill.name}` skill. Follow its instructions:\n\n{skill.body}"
+```
+
+#### `builtin/*.md` — see §7.5.3 for examples.
+
+### 6.11 `hello_agent/windows/`
+
+See §7.5 for full spec on tray + autostart.
+
+### 6.12 `hello_agent/cli/`
+
+#### `cli/main.py`
+
+```python
+# Typer-based CLI
+import typer
+from hello_agent.cli import chat, run, serve, rag, memory, tools_cmd, mcp, doctor, completions
+
+app = typer.Typer(
+    name="hello-agent",
+    help="Personal Windows Python agent — Hermes-inspired.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+
+app.add_typer(chat.app, name="chat")
+app.add_typer(run.app, name="run")
+app.add_typer(serve.app, name="serve")
+app.add_typer(rag.app, name="rag")
+app.add_typer(memory.app, name="memory")
+app.add_typer(tools_cmd.app, name="tools")
+app.add_typer(mcp.app, name="mcp")
+app.add_typer(doctor.app, name="doctor")
+app.add_typer(completions.app, name="completion")
+
+@app.callback()
+def main_callback(
+    version: bool = typer.Option(False, "--version", "-v", help="Show version and exit"),
+    profile: str = typer.Option(None, "--profile", "-p", help="Use a named profile"),
+    log_level: str = typer.Option(None, "--log-level", help="Override LOG_LEVEL"),
+):
+    """hello-agent — Personal Windows Python agent."""
+    from hello_agent.core.logging import setup_logging
+    from hello_agent.core.paths import _apply_profile_override
+    _apply_profile_override()
+    setup_logging()
+    if version:
+        from hello_agent import __version__
+        typer.echo(f"hello-agent {__version__}")
+        raise typer.Exit()
+
+def main():
+    app()
+
+if __name__ == "__main__":
+    main()
+```
+
+#### `cli/chat.py`, `run.py`, `serve.py`, `rag.py`, `memory.py`, `tools_cmd.py`, `mcp.py`, `doctor.py`, `completions.py`
+
+Each is a small `typer.Typer()` instance with 1-5 subcommands. Total budget ~600 LOC for all CLI files.
+
+- `chat.py`: interactive TUI using `prompt_toolkit` + `rich`. Reads user input in a loop, calls `ReActAgent.run()`, prints streaming output. ~250 LOC.
+- `run.py`: one-shot. `hello-agent run "summarize this PDF"` → run once, print result, exit. ~80 LOC.
+- `serve.py`: start `web/server.py` + optionally `windows/tray.py` in background. ~100 LOC.
+- `rag.py`: `hello-agent rag index <path>` and `hello-agent rag query <text>`. ~100 LOC.
+- `memory.py`: `hello-agent memory show`, `search <query>`, `forget <name>`, `export`. ~80 LOC.
+- `tools_cmd.py`: `hello-agent tools list|enable|disable|show <name>`. ~80 LOC.
+- `mcp.py`: `hello-agent mcp serve` (run as MCP server). ~40 LOC.
+- `doctor.py`: runs `windows/env.py` probe and prints a checklist. ~100 LOC.
+- `completions.py`: `hello-agent completion bash|zsh|fish|pwsh` → print shell completion script. ~40 LOC.
+
+---
+
+(End of part 3. See docs/ENGINEERING.md for parts 4+.)
+
+
+---
+
+## 7. Feature Implementation Specs
+
+This section goes deep on the 5 user personalizations + 3 supporting features
+(Web UI, tray, MCP). These are net-new code (no hermes equivalent to copy from).
+
+### 7.1 Document Parser — MinerU 2.5 Pro + markitdown + text fallback
+
+**Tool signature**:
+```python
+def parse_document(path: str | Path, *, force_parser: str | None = None) -> ToolResponse:
+    """Parse a document file, returning a ToolResponse with:
+    - success: True/False
+    - data: {"text": str, "parser_used": str, "metadata": dict, "page_count": int | None}
+    - error: error message (if failed)
+    """
+```
+
+**Call flow** (the chain):
+
+```
+parse_document(path)
+    ↓
+1. Detect file type by extension
+   ├── .pdf        → try MinerU first, then markitdown, then pypdf
+   ├── .docx/.xlsx/.pptx → markitdown
+   ├── .html/.htm  → markitdown (uses mammoth-style HTML extraction)
+   ├── .md/.txt    → read directly (no parsing)
+   ├── .png/.jpg   → MinerU with OCR mode (or markitdown with caption)
+   └── (other)     → try markitdown, fall back to raw read
+    ↓
+2. Route to chosen parser
+    ↓
+3. Each parser returns a unified dict:
+   {"text": str, "metadata": dict, "page_count": int | None, "parser_used": str}
+    ↓
+4. Wrap in ToolResponse(success=True, data=...)
+    ↓
+5. If all parsers fail, return ToolResponse(success=False, error="All parsers failed", hint="...")
+```
+
+**Implementation** (`tools/builtin/document_parser.py`):
+
+```python
+# Imports
+import os
+import httpx
+from pathlib import Path
+from markitdown import MarkItDown
+from hello_agent.core.types import ToolResponse
+from hello_agent.core.config import get_env
+
+# Register the tool
+from hello_agent.tools.registry import registry
+
+def _parse_with_mineru(path: Path) -> dict:
+    """Call MinerU 2.5 Pro API.
+    POST {MINERU_BASE_URL}/file/upload (multipart)
+    → returns task_id
+    Poll {MINERU_BASE_URL}/file/query/{task_id} until status=success
+    → returns {"text": str, "metadata": dict, "page_count": int}
+    """
+    env = get_env()
+    if not env.mineru_api_key:
+        raise RuntimeError("MINERU_API_KEY not set")
+
+    headers = {"Authorization": f"Bearer {env.mineru_api_key}"}
+
+    # Upload
+    with open(path, "rb") as f:
+        upload_resp = httpx.post(
+            f"{env.mineru_base_url}/file/upload",
+            headers=headers,
+            files={"file": (path.name, f, "application/octet-stream")},
+            data={"model": env.mineru_model},
+            timeout=60.0,
+        )
+    upload_resp.raise_for_status()
+    task_id = upload_resp.json()["data"]["task_id"]
+
+    # Poll
+    for _ in range(60):  # max 5 min (5s intervals)
+        poll_resp = httpx.get(
+            f"{env.mineru_base_url}/file/query/{task_id}",
+            headers=headers,
+            timeout=30.0,
+        )
+        poll_resp.raise_for_status()
+        data = poll_resp.json()["data"]
+        if data["state"] == "success":
+            # Download extracted text
+            text_url = data.get("full_md_link") or data.get("text_url")
+            if text_url:
+                text_resp = httpx.get(text_url, timeout=60.0)
+                text = text_resp.text
+            else:
+                text = data.get("text", "")
+            return {
+                "text": text,
+                "metadata": {"task_id": task_id, "model": env.mineru_model, **data.get("metadata", {})},
+                "page_count": data.get("page_count"),
+                "parser_used": "mineru",
+            }
+        if data["state"] in ("failed", "error"):
+            raise RuntimeError(f"MinerU failed: {data.get('err_msg', 'unknown')}")
+        import time; time.sleep(5)
+
+    raise TimeoutError("MinerU poll timed out after 5 minutes")
+
+def _parse_with_markitdown(path: Path) -> dict:
+    md = MarkItDown()
+    result = md.convert(str(path))
+    return {
+        "text": result.text_content,
+        "metadata": {"source": str(path), "size_bytes": path.stat().st_size},
+        "page_count": None,
+        "parser_used": "markitdown",
+    }
+
+def _parse_with_pypdf(path: Path) -> dict:
+    from pypdf import PdfReader
+    reader = PdfReader(str(path))
+    text = "\n\n".join(page.extract_text() for page in reader.pages)
+    return {
+        "text": text,
+        "metadata": {"source": str(path), "page_count": len(reader.pages)},
+        "page_count": len(reader.pages),
+        "parser_used": "pypdf",
+    }
+
+def _parse_raw(path: Path) -> dict:
+    return {
+        "text": path.read_text(encoding="utf-8", errors="replace"),
+        "metadata": {"source": str(path), "size_bytes": path.stat().st_size},
+        "page_count": None,
+        "parser_used": "raw",
+    }
+
+def parse_document(path_str: str, force_parser: str = "") -> ToolResponse:
+    path = Path(path_str).expanduser().resolve()
+    if not path.exists():
+        return ToolResponse.fail(f"File not found: {path}")
+    if not path.is_file():
+        return ToolResponse.fail(f"Not a file: {path}")
+
+    suffix = path.suffix.lower()
+    is_pdf = suffix == ".pdf"
+    is_binary_doc = suffix in {".docx", ".xlsx", ".pptx", ".html", ".htm"}
+    is_text = suffix in {".md", ".txt", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".csv"}
+    is_image = suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
+
+    # Build the parser chain based on file type + force_parser override
+    if force_parser == "mineru":
+        chain = [_parse_with_mineru]
+    elif force_parser == "markitdown":
+        chain = [_parse_with_markitdown]
+    elif force_parser == "pypdf":
+        chain = [_parse_with_pypdf]
+    elif force_parser == "raw":
+        chain = [_parse_raw]
+    elif is_pdf:
+        chain = [_parse_with_mineru, _parse_with_markitdown, _parse_with_pypdf]
+    elif is_binary_doc:
+        chain = [_parse_with_markitdown]
+    elif is_text:
+        chain = [_parse_raw]
+    elif is_image:
+        chain = [_parse_with_mineru, _parse_with_markitdown]
+    else:
+        chain = [_parse_with_markitdown, _parse_raw]
+
+    errors = []
+    for parser in chain:
+        try:
+            result = parser(path)
+            return ToolResponse.ok(result)
+        except Exception as e:
+            errors.append(f"{parser.__name__}: {type(e).__name__}: {e}")
+            continue
+
+    return ToolResponse.fail(
+        "All parsers failed",
+        hint="; ".join(errors),
+    )
+
+# Tool registration
+registry.register(
+    name="document_parser",
+    toolset="knowledge",
+    schema={
+        "name": "document_parser",
+        "description": "Parse a document file (PDF, DOCX, XLSX, MD, etc.) to plain text/Markdown. Uses MinerU 2.5 Pro for PDFs by default; falls back to markitdown or pypdf if MinerU fails or is unavailable.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path to the file."},
+                "force_parser": {
+                    "type": "string",
+                    "enum": ["", "mineru", "markitdown", "pypdf", "raw"],
+                    "description": "Force a specific parser (bypasses fallback chain).",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    handler=lambda args, **kw: parse_document(args.get("path", ""), force_parser=args.get("force_parser", "")),
+    check_fn=lambda: bool(get_env().mineru_api_key) or True,  # chain works without MinerU
+    requires_env=[],  # MinerU key optional; chain falls back
+)
+```
+
+**Acceptance**:
+- `parse_document("test.pdf")` with MinerU key → returns MinerU result
+- `parse_document("test.pdf")` without MinerU key → falls back to markitdown, then pypdf
+- `parse_document("notes.md")` → uses raw read (no MinerU call)
+- `parse_document("nonexistent.pdf")` → returns `success=False, error="File not found"`
+
+### 7.2 RAG — 4-strategy advanced retrieval
+
+The four strategies, all returning ranked candidate lists, then fused via reciprocal rank fusion.
+
+#### 7.2.1 Loader (`rag/loader.py`)
+
+```python
+from pathlib import Path
+from hello_agent.core.types import ToolResponse
+from hello_agent.tools.builtin.document_parser import parse_document
+
+SUPPORTED_EXTENSIONS = {
+    # Text-native (read directly)
+    ".md", ".txt", ".rst",
+    # Code
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".sh", ".bash", ".ps1", ".sql",
+    # Data / config
+    ".json", ".yaml", ".yml", ".toml", ".csv", ".xml", ".ini", ".env",
+    # Office / docs (use parser chain)
+    ".pdf", ".docx", ".xlsx", ".pptx", ".html", ".htm",
+    # Images (use MinerU with OCR)
+    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+}
+
+def load_file(path: str | Path) -> ToolResponse:
+    """Load a file as text. Uses document_parser for binary formats.
+    Returns ToolResponse(success=True, data={"text": str, "source": str, "loader": str, "metadata": dict}).
+    """
+    path = Path(path).expanduser().resolve()
+    if not path.exists():
+        return ToolResponse.fail(f"File not found: {path}")
+    if not path.is_file():
+        return ToolResponse.fail(f"Not a file: {path}")
+    if path.stat().st_size > 50_000_000:  # 50MB hard limit
+        return ToolResponse.fail(f"File too large: {path.stat().st_size} bytes (limit 50MB)")
+
+    suffix = path.suffix.lower()
+    if suffix in {".md", ".txt", ".rst", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs",
+                  ".java", ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".sh", ".bash", ".ps1",
+                  ".sql", ".json", ".yaml", ".yml", ".toml", ".csv", ".xml", ".ini", ".env"}:
+        return ToolResponse.ok({
+            "text": path.read_text(encoding="utf-8", errors="replace"),
+            "source": str(path),
+            "loader": "text",
+            "metadata": {"size_bytes": path.stat().st_size, "extension": suffix},
+        })
+    else:
+        # Binary / office / image — use document_parser
+        result = parse_document(str(path))
+        if result.success:
+            data = result.data
+            data["loader"] = f"document_parser.{data.get('parser_used', 'unknown')}"
+            return ToolResponse.ok(data)
+        return result
+
+def load_directory(path: str | Path, recursive: bool = True, extensions: list[str] | None = None) -> list[dict]:
+    """Walk a directory, load all supported files.
+    Returns: list of {"text", "source", "loader", "metadata"} dicts.
+    Skips files that fail to load (with a warning logged).
+    """
+    ...
+```
+
+#### 7.2.2 Chunker (`rag/chunker.py`)
+
+```python
+import tiktoken
+from dataclasses import dataclass
+
+@dataclass
+class Chunk:
+    text: str
+    source: str
+    chunk_index: int
+    start_char: int
+    end_char: int
+    token_count: int
+
+class SlidingWindowChunker:
+    def __init__(self, chunk_size_tokens: int = 512, overlap_tokens: int = 64, encoding: str = "cl100k_base"):
+        self.chunk_size = chunk_size_tokens
+        self.overlap = overlap_tokens
+        self.encoder = tiktoken.get_encoding(encoding)
+
+    def chunk(self, text: str, source: str) -> list[Chunk]:
+        """Slide a window of chunk_size tokens with overlap_tokens overlap.
+        Respect paragraph boundaries where possible (prefer to start/end chunks at \n\n).
+        """
+        tokens = self.encoder.encode(text)
+        if len(tokens) <= self.chunk_size:
+            return [Chunk(
+                text=text,
+                source=source,
+                chunk_index=0,
+                start_char=0,
+                end_char=len(text),
+                token_count=len(tokens),
+            )]
+
+        chunks = []
+        i = 0
+        chunk_index = 0
+        while i < len(tokens):
+            window_end = min(i + self.chunk_size, len(tokens))
+            window_tokens = tokens[i:window_end]
+            chunk_text = self.encoder.decode(window_tokens)
+            chunks.append(Chunk(
+                text=chunk_text,
+                source=source,
+                chunk_index=chunk_index,
+                start_char=len(self.encoder.decode(tokens[:i])),
+                end_char=len(self.encoder.decode(tokens[:window_end])),
+                token_count=len(window_tokens),
+            ))
+            chunk_index += 1
+            if window_end == len(tokens):
+                break
+            i += self.chunk_size - self.overlap
+        return chunks
+```
+
+#### 7.2.3 Embedder (`rag/embedder.py`)
+
+```python
+import os
+from hello_agent.core.config import get_config, get_env
+from hello_agent.core.llm import LLMClient
+from hello_agent.core.logging import get_logger
+from hello_agent.core.types import ToolResponse
+
+logger = get_logger(__name__)
+
+class Embedder:
+    def __init__(self, provider: str | None = None, model: str | None = None):
+        cfg = get_config().rag
+        self.provider = provider or cfg.embedding_provider
+        self.model = model or cfg.embedding_model
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed a list of texts. Returns list of float vectors.
+        For OpenAI: uses the embeddings API.
+        For local: uses sentence-transformers.
+        """
+        if not texts:
+            return []
+        if self.provider == "openai":
+            return self._embed_openai(texts)
+        elif self.provider == "local":
+            return self._embed_local(texts)
+        else:
+            raise ValueError(f"Unknown embedding provider: {self.provider}")
+
+    def _embed_openai(self, texts: list[str]) -> list[list[float]]:
+        env = get_env()
+        from openai import OpenAI
+        client = OpenAI(
+            base_url=env.llm_base_url,
+            api_key=env.llm_api_key,
+        )
+        # Batching
+        all_embeddings = []
+        batch_size = get_config().rag.embedder_batch_size  # default 32
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            resp = client.embeddings.create(model=self.model, input=batch)
+            all_embeddings.extend([d.embedding for d in resp.data])
+        return all_embeddings
+
+    def _embed_local(self, texts: list[str]) -> list[list[float]]:
+        from sentence_transformers import SentenceTransformer
+        if not hasattr(self, "_model"):
+            self._model = SentenceTransformer(self.model)
+        return self._model.encode(texts, convert_to_numpy=True).tolist()
+
+    @property
+    def dim(self) -> int:
+        if self.provider == "openai":
+            # text-embedding-3-small → 1536, text-embedding-3-large → 3072
+            return {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072, "text-embedding-ada-002": 1536}.get(self.model, 1536)
+        else:
+            # sentence-transformers: depends on model
+            return 768  # most common; override if needed
+```
+
+#### 7.2.4 Retrieval — 4 strategies (`rag/retrieval.py`)
+
+```python
+import math
+from collections import defaultdict
+from dataclasses import dataclass
+from hello_agent.rag.embedder import Embedder
+from hello_agent.rag.vector_store import VectorStore
+from hello_agent.core.llm import LLMClient
+from hello_agent.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+@dataclass
+class RetrievalResult:
+    chunk_id: str
+    text: str
+    source: str
+    score: float
+    strategy: str
+    metadata: dict
+
+# ─── Strategy 1: Query Rewrite ───────────────────────────────────────────────
+# Use the LLM to rewrite the query into 2-3 semantically equivalent forms,
+# then embed each form and retrieve.
+def query_rewrite(query: str, llm: LLMClient, n_rewrites: int = 3) -> list[str]:
+    prompt = f"""Given the user's search query, generate {n_rewrites} alternative phrasings
+that would retrieve the same information. Return as a JSON list of strings.
+Make the rephrasings diverse: use synonyms, different angles, related concepts.
+
+User query: {query!r}
+
+JSON list:"""
+    response = llm.chat([{"role": "user", "content": prompt}], temperature=0.5)
+    import json
+    try:
+        rewrites = json.loads(response.choices[0].message.content)
+        if not isinstance(rewrites, list):
+            rewrites = [rewrites]
+        return [query] + rewrites[:n_rewrites]
+    except (json.JSONDecodeError, KeyError):
+        return [query]
+
+# ─── Strategy 2: HyDE (Hypothetical Document Embeddings) ─────────────────────
+# Ask the LLM to write a hypothetical answer to the query. Embed that
+# hypothetical answer (which is in the same vector space as real docs).
+# Then retrieve real chunks nearest to the hypothetical.
+def hyde_generate(query: str, llm: LLMClient, max_tokens: int = 300) -> str:
+    prompt = f"""Write a short passage (2-3 paragraphs) that would be a perfect answer to
+the following question. Don't hedge — write as if you know the answer.
+
+Question: {query}
+
+Passage:"""
+    response = llm.chat([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=max_tokens)
+    return response.choices[0].message.content or ""
+
+# ─── Strategy 3: Multi-Query ─────────────────────────────────────────────────
+# Like query_rewrite but uses sub-questions rather than rewrites.
+# Particularly good for complex queries with multiple sub-topics.
+def multi_query(query: str, llm: LLMClient, n_queries: int = 4) -> list[str]:
+    prompt = f"""Break the following question into {n_queries} distinct sub-questions,
+each of which could be answered by a different document. Return as a JSON list.
+
+Original question: {query!r}
+
+JSON list of sub-questions:"""
+    response = llm.chat([{"role": "user", "content": prompt}], temperature=0.5)
+    import json
+    try:
+        queries = json.loads(response.choices[0].message.content)
+        return [query] + queries[:n_queries]
+    except (json.JSONDecodeError, KeyError):
+        return [query]
+
+# ─── Strategy 4: Re-rank (Cross-encoder style, simplified) ──────────────────
+# Retrieve a larger candidate set, then re-rank by:
+#   - cosine similarity to original query (most important)
+#   - exact keyword match boost
+#   - LLM-based relevance scoring (top 20 only, for cost reasons)
+def rerank(query: str, candidates: list[RetrievalResult], llm: LLMClient, top_n: int = 20) -> list[RetrievalResult]:
+    """Re-rank top-N candidates using a cheap LLM scoring pass.
+    Each candidate gets a score 0-10, the final score is a weighted blend.
+    """
+    if len(candidates) <= 1:
+        return candidates
+
+    # Only re-rank the top_n most promising
+    top = candidates[:top_n]
+    rest = candidates[top_n:]
+
+    # Build scoring prompt
+    items_text = "\n\n".join(
+        f"[{i}] (similarity={c.score:.3f})\n{c.text[:500]}"
+        for i, c in enumerate(top)
+    )
+    prompt = f"""You are a relevance ranker. Score each document's relevance to the query on a 0-10 scale.
+Output a JSON list of integers, one per document, in the same order.
+
+Query: {query!r}
+
+Documents:
+{items_text}
+
+JSON list of scores:"""
+
+    response = llm.chat([{"role": "user", "content": prompt}], temperature=0.0)
+    import json
+    try:
+        scores = json.loads(response.choices[0].message.content)
+        for c, s in zip(top, scores):
+            c.score = 0.6 * c.score + 0.4 * (float(s) / 10.0)
+            c.metadata["llm_rerank_score"] = s
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        pass  # fall back to original cosine scores
+
+    top.sort(key=lambda c: c.score, reverse=True)
+    return top + rest
+
+# ─── Reciprocal Rank Fusion ──────────────────────────────────────────────────
+def rrf_fuse(ranked_lists: list[list[RetrievalResult]], k: int = 60) -> list[RetrievalResult]:
+    """Combine multiple ranked lists via Reciprocal Rank Fusion.
+    score(d) = sum(1 / (k + rank_i(d))) for each list i.
+    """
+    scores: dict[str, float] = defaultdict(float)
+    by_id: dict[str, RetrievalResult] = {}
+    for lst in ranked_lists:
+        for rank, result in enumerate(lst, start=1):
+            scores[result.chunk_id] += 1.0 / (k + rank)
+            by_id[result.chunk_id] = result
+    fused = [
+        RetrievalResult(
+            chunk_id=cid,
+            text=by_id[cid].text,
+            source=by_id[cid].source,
+            score=score,
+            strategy="rrf_fused",
+            metadata=by_id[cid].metadata,
+        )
+        for cid, score in sorted(scores.items(), key=lambda kv: -kv[1])
+    ]
+    return fused
+
+# ─── Main entry ──────────────────────────────────────────────────────────────
+def retrieve(
+    query: str,
+    vector_store: VectorStore,
+    embedder: Embedder,
+    llm: LLMClient,
+    *,
+    strategies: list[str] = None,   # subset of ["rewrite", "hyde", "multi_query", "rerank"]
+    top_k: int = 8,
+    candidate_k: int = 20,           # how many to retrieve per strategy
+) -> list[RetrievalResult]:
+    """Run the configured strategies and fuse results.
+    Returns top_k RetrievalResult objects, sorted by fused score (desc).
+    """
+    if strategies is None:
+        strategies = ["rewrite", "hyde", "multi_query", "rerank"]
+
+    ranked_lists: list[list[RetrievalResult]] = []
+
+    # Strategy 1: query rewrite
+    if "rewrite" in strategies:
+        queries = query_rewrite(query, llm)
+        results = []
+        for q in queries:
+            emb = embedder.embed([q])[0]
+            results.extend(vector_store.query(emb, top_k=candidate_k))
+        # Dedupe by chunk_id, keep highest score
+        by_id = {}
+        for r in results:
+            if r.chunk_id not in by_id or r.score > by_id[r.chunk_id].score:
+                by_id[r.chunk_id] = r
+        ranked_lists.append(sorted(by_id.values(), key=lambda r: -r.score))
+
+    # Strategy 2: hyde
+    if "hyde" in strategies:
+        hyde_text = hyde_generate(query, llm)
+        emb = embedder.embed([hyde_text])[0]
+        results = vector_store.query(emb, top_k=candidate_k)
+        ranked_lists.append(results)
+
+    # Strategy 3: multi_query
+    if "multi_query" in strategies:
+        queries = multi_query(query, llm)
+        results = []
+        for q in queries:
+            emb = embedder.embed([q])[0]
+            results.extend(vector_store.query(emb, top_k=candidate_k))
+        by_id = {}
+        for r in results:
+            if r.chunk_id not in by_id or r.score > by_id[r.chunk_id].score:
+                by_id[r.chunk_id] = r
+        ranked_lists.append(sorted(by_id.values(), key=lambda r: -r.score))
+
+    # Strategy 4: rerank (needs a base list to rerank — use the fused list so far)
+    if "rerank" in strategies and ranked_lists:
+        base = rrf_fuse(ranked_lists)[:candidate_k]
+        reranked = rerank(query, base, llm, top_n=20)
+        ranked_lists.append(reranked)
+    elif not ranked_lists:
+        # Fallback: plain vector search
+        emb = embedder.embed([query])[0]
+        ranked_lists.append(vector_store.query(emb, top_k=candidate_k))
+
+    fused = rrf_fuse(ranked_lists)
+    return fused[:top_k]
+```
+
+**Acceptance**:
+- All 4 strategies return top_k results
+- `retrieve("query")` with default strategies runs all 4 in sequence, fuses, returns top 8
+- `retrieve(..., strategies=["rewrite"])` only runs query rewrite
+- Re-rank with broken LLM output falls back to cosine scores (graceful degradation)
+
+### 7.3 Obsidian Memory Vault + Git Sync
+
+The user's signature feature. Two files: `memory/obsidian_sync.py` + `memory/git_sync.py`.
+
+#### `memory/obsidian_sync.py`
+
+Serializes memories to Obsidian-compatible markdown with frontmatter + `[[wikilinks]]` + tags, writes them to the vault, extracts wikilinks for graph visualization.
+
+```python
+from datetime import datetime
+from pathlib import Path
+import frontmatter  # pyyaml-based
+import re
+from hello_agent.core.config import get_config
+from hello_agent.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+WIKILINK_RE = re.compile(r'\[\[([^\]]+)\]\]')
+TAG_RE = re.compile(r'(?:^|\s)#([a-zA-Z0-9_/-]+)')
+
+class ObsidianSync:
+    def __init__(self, vault_path: str | Path | None = None, memory_subdir: str = "memory"):
+        cfg = get_config().memory
+        self.vault_path = Path(vault_path or cfg.obsidian_vault_path).expanduser().resolve()
+        self.memory_dir = self.vault_path / memory_subdir
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self._last_export: dict[str, str] = {}  # memory_id → file_path
+
+    def export_memory(self, memory_id: str, content: str, *, kind: str = "fact",
+                      title: str | None = None, tags: list[str] | None = None,
+                      related: list[str] | None = None,
+                      source_session_id: str | None = None) -> str:
+        """Write a memory to the Obsidian vault. Returns the file path.
+
+        File format:
+        ```
+        ---
+        id: <memory_id>
+        kind: fact | preference | project_context | skill_state | episode
+        created: 2026-06-05T23:30:00
+        tags: [agent, hello-agent, ...]
+        source_session: <session_id or null>
+        ---
+
+        # <Title>
+
+        <content>
+
+        ## Related
+        - [[other_memory_id]] — <optional description>
+        ```
+        """
+        if not title:
+            title = memory_id.replace("_", " ").title()
+        tags = tags or []
+        related = related or []
+
+        # Extract inline wikilinks and tags from content
+        inline_links = WIKILINK_RE.findall(content)
+        inline_tags = TAG_RE.findall(content)
+        all_tags = sorted(set(tags + inline_tags))
+
+        # Build file content
+        post = frontmatter.Post(content, **{
+            "id": memory_id,
+            "kind": kind,
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "tags": all_tags,
+            "source_session": source_session_id,
+        })
+        post.metadata["title"] = title
+
+        # Append Related section
+        if related or inline_links:
+            post.content += "\n\n## Related\n"
+            for link_id in sorted(set(related + inline_links)):
+                post.content += f"- [[{link_id}]]\n"
+
+        # Filename: <date>_<slug>.md
+        slug = re.sub(r'[^a-z0-9-]+', '-', memory_id.lower())[:50]
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        file_path = self.memory_dir / f"{date_str}_{slug}.md"
+
+        # Atomic write
+        file_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        logger.bind(category="memory").info(f"Exported memory {memory_id} to {file_path}")
+        self._last_export[memory_id] = str(file_path)
+        return str(file_path)
+
+    def delete_memory(self, memory_id: str) -> bool:
+        path = self._last_export.get(memory_id)
+        if path and Path(path).exists():
+            Path(path).unlink()
+            del self._last_export[memory_id]
+            return True
+        return False
+
+    def list_memories(self) -> list[dict]:
+        """List all memory files in the vault. Returns: [{"path", "id", "kind", "title", "tags"}, ...]"""
+        memories = []
+        for fp in self.memory_dir.glob("*.md"):
+            try:
+                post = frontmatter.load(fp)
+            except Exception:
+                continue
+            memories.append({
+                "path": str(fp),
+                "id": post.get("id", fp.stem),
+                "kind": post.get("kind", "unknown"),
+                "title": post.get("title", fp.stem),
+                "tags": post.get("tags", []),
+            })
+        return memories
+
+    def get_memory(self, memory_id: str) -> dict | None:
+        for fp in self.memory_dir.glob("*.md"):
+            try:
+                post = frontmatter.load(fp)
+            except Exception:
+                continue
+            if post.get("id") == memory_id:
+                return {"path": str(fp), "frontmatter": dict(post.metadata), "content": post.content}
+        return None
+
+    def extract_relations(self) -> dict[str, list[str]]:
+        """Scan all memory files, return {memory_id: [related_ids]}.
+        Used by Obsidian's graph view automatically; we also use it for
+        in-app memory recall.
+        """
+        relations = defaultdict(list)
+        for fp in self.memory_dir.glob("*.md"):
+            try:
+                post = frontmatter.load(fp)
+            except Exception:
+                continue
+            mid = post.get("id", fp.stem)
+            wikilinks = WIKILINK_RE.findall(post.content)
+            for link in wikilinks:
+                relations[mid].append(link)
+        return dict(relations)
+```
+
+**Pyproject dep**: add `python-frontmatter==1.1.0` to `[project.dependencies]`.
+
+**Acceptance**:
+- A note written by `export_memory("favorite_editor", "I love VS Code", kind="preference", tags=["tools"])` produces a file at `<vault>/memory/2026-06-05_favorite-editor.md` with valid frontmatter, content, and a Related section if other notes are linked.
+- Opening the vault in Obsidian shows the note in the graph view (it picks up `[[wikilink]]` syntax automatically).
+- `list_memories()` returns the new note.
+- `extract_relations()` returns a graph: `{"favorite_editor": ["related_id_1", ...]}`.
+
+#### `memory/git_sync.py`
+
+```python
+import subprocess
+import time
+from pathlib import Path
+from datetime import datetime
+from threading import Lock, Thread
+from hello_agent.core.config import get_config
+from hello_agent.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+class GitSync:
+    """Background sync of the Obsidian vault to a Git repo.
+
+    Workflow:
+    1. If the vault dir isn't a git repo, init + add remote.
+    2. Periodically (every N minutes, configurable):
+       a. git add -A
+       b. git commit -m "memory sync: <timestamp>" (if there are changes)
+       c. git push (if remote is configured and token is set)
+    """
+
+    def __init__(self, vault_path: str | Path | None = None):
+        cfg = get_config().memory
+        self.vault_path = Path(vault_path or cfg.obsidian_vault_path).expanduser().resolve()
+        self.repo = cfg.obsidian_git_repo
+        self.token = cfg.obsidian_git_token
+        self.commit_interval = cfg.obsidian_auto_commit_minutes
+        self.push_interval = cfg.obsidian_auto_push_minutes
+        self._lock = Lock()
+        self._last_commit: float = 0
+        self._last_push: float = 0
+        self._stop = False
+        self._thread: Thread | None = None
+
+    def start(self):
+        """Start the background sync thread."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._ensure_repo()
+        self._stop = False
+        self._thread = Thread(target=self._loop, daemon=True, name="obsidian-git-sync")
+        self._thread.start()
+        logger.info(f"Obsidian git sync started (commit every {self.commit_interval}m, push every {self.push_interval}m)")
+
+    def stop(self):
+        self._stop = True
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self):
+        while not self._stop:
+            time.sleep(60)  # check every minute
+            now = time.time()
+            if now - self._last_commit >= self.commit_interval * 60:
+                self._try_commit()
+            if self.push_interval > 0 and now - self._last_push >= self.push_interval * 60:
+                self._try_push()
+
+    def _ensure_repo(self):
+        if not (self.vault_path / ".git").exists():
+            self._run("git", "init", cwd=str(self.vault_path))
+            if self.repo:
+                # Set up remote with token auth
+                if self.token:
+                    auth_url = f"https://{self.token}@github.com/{self.repo}.git"
+                else:
+                    auth_url = f"https://github.com/{self.repo}.git"
+                self._run("git", "remote", "add", "origin", auth_url, cwd=str(self.vault_path))
+            # Initial commit
+            self._run("git", "add", "-A", cwd=str(self.vault_path))
+            self._run("git", "commit", "-m", "initial: hello-agent memory vault", cwd=str(self.vault_path))
+
+    def _try_commit(self) -> bool:
+        with self._lock:
+            try:
+                # Check for changes
+                status = self._run("git", "status", "--porcelain", cwd=str(self.vault_path), check=False)
+                if not status.strip():
+                    return False  # no changes
+                self._run("git", "add", "-A", cwd=str(self.vault_path))
+                msg = f"memory sync: {datetime.now().isoformat(timespec='seconds')}"
+                self._run("git", "commit", "-m", msg, cwd=str(self.vault_path))
+                self._last_commit = time.time()
+                logger.info(f"Committed: {msg}")
+                return True
+            except Exception as e:
+                logger.error(f"Git commit failed: {e}")
+                return False
+
+    def _try_push(self) -> bool:
+        with self._lock:
+            if not self.repo:
+                return False
+            try:
+                self._run("git", "push", "-u", "origin", "main", cwd=str(self.vault_path))
+                self._last_push = time.time()
+                logger.info("Pushed to remote")
+                return True
+            except Exception as e:
+                logger.error(f"Git push failed: {e}")
+                return False
+
+    @staticmethod
+    def _run(*args, cwd: str, check: bool = True) -> str:
+        result = subprocess.run(
+            list(args),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"Command failed: {' '.join(args)}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+        return result.stdout
+
+    def force_sync(self) -> dict:
+        """Manual trigger. Returns {"committed": bool, "pushed": bool}."""
+        committed = self._try_commit()
+        pushed = self._try_push() if committed else False
+        return {"committed": committed, "pushed": pushed}
+```
+
+**Acceptance**:
+- First call: `start()` inits git, makes initial commit
+- After exporting 3 memories + waiting 5 min: auto-commits with "memory sync: <ts>" message
+- After waiting 15 min more: auto-pushes to GitHub (if token is set)
+- `force_sync()` works from CLI: `hello-agent memory sync`
+
+### 7.4 Web UI (FastAPI + React)
+
+#### 7.4.1 Backend (`web/server.py`)
+
+```python
+# Imports
+import json
+import asyncio
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from sse_starlette.sse import EventSourceResponse
+from pydantic import BaseModel
+from hello_agent.agents.react import ReActAgent
+from hello_agent.agents.simple import SimpleAgent
+from hello_agent.core.llm import LLMClient
+from hello_agent.core.config import get_config, get_env
+from hello_agent.core.logging import setup_logging, get_logger
+from hello_agent.tools.registry import ToolRegistry
+from hello_agent.tools.builtin import document_parser, file_tools, shell_tool, web_search, web_fetch, todowrite, notify
+from hello_agent.web.routes import chat as chat_routes, sessions, skills, tools as tools_routes, config as config_routes
+
+logger = get_logger(__name__)
+
+def create_app() -> FastAPI:
+    setup_logging()
+    app = FastAPI(
+        title="hello-agent Web UI",
+        version="0.1.0",
+        description="Local Web UI for hello-agent. Listens on 127.0.0.1:8648 by default.",
+    )
+
+    # Register routes
+    app.include_router(chat_routes.router, prefix="/api/chat", tags=["chat"])
+    app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+    app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+    app.include_router(tools_routes.router, prefix="/api/tools", tags=["tools"])
+    app.include_router(config_routes.router, prefix="/api/config", tags=["config"])
+
+    # Health check
+    @app.get("/api/health")
+    async def health():
+        return {"status": "ok", "version": "0.1.0"}
+
+    # Static files (React build output)
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    else:
+        @app.get("/")
+        async def root():
+            return {"message": "hello-agent API is running. Build the React UI with `cd web-ui && npm run build` to enable the web interface."}
+
+    return app
+
+# Entry point for `uvicorn hello_agent.web.server:app`
+app = create_app()
+```
+
+#### 7.4.2 Routes (`web/routes/chat.py`)
+
+```python
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
+from hello_agent.agents.react import ReActAgent
+from hello_agent.core.llm import LLMClient
+from hello_agent.core.config import get_env
+import json
+import asyncio
+
+router = APIRouter()
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    stream: bool = True
+
+@router.post("/")
+async def chat(req: ChatRequest):
+    if req.stream:
+        return EventSourceResponse(_stream_chat(req))
+    else:
+        # Non-streaming path
+        ...
+
+async def _stream_chat(req: ChatRequest):
+    llm = LLMClient()
+    registry = ToolRegistry()
+    # Register builtin tools
+    from hello_agent.tools.builtin import document_parser, file_tools, shell_tool, web_search, web_fetch, todowrite, notify
+    document_parser.register(registry)
+    # ... etc
+
+    agent = ReActAgent(
+        llm=llm,
+        tool_registry=registry,
+        system_prompt="You are a helpful personal assistant running on the user's Windows machine. Be concise, prefer code/commands when asked, and remember user preferences.",
+        session_id=req.session_id,
+    )
+
+    yield {"event": "start", "data": json.dumps({"session_id": agent.session_id})}
+
+    # Stream each step
+    state = AgentState(session_id=agent.session_id, messages=[Message(role=Role.USER, content=req.message)])
+    for step_idx in range(agent.max_iterations):
+        state = agent.step(state)
+        # Yield a "message" event for the assistant text or tool calls
+        last = state.messages[-1]
+        yield {
+            "event": "message",
+            "data": json.dumps({
+                "role": last.role.value,
+                "content": last.content,
+                "tool_calls": [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in (last.tool_calls or [])],
+            }),
+        }
+        # If tool calls, dispatch them
+        if last.role == Role.ASSISTANT and last.tool_calls:
+            for tc in last.tool_calls:
+                result = agent._dispatch_tool(tc, state)
+                yield {"event": "tool_result", "data": json.dumps({
+                    "tool_call_id": tc.id,
+                    "name": tc.name,
+                    "result": result.content if hasattr(result, "content") else str(result),
+                })}
+                state.messages.append(Message(
+                    role=Role.TOOL,
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                    content=result.content if hasattr(result, "content") else str(result),
+                ))
+        if agent._is_terminal(state):
+            break
+    yield {"event": "done", "data": json.dumps({"iterations": state.iteration + 1})}
+```
+
+#### 7.4.3 API Contract (full list)
+
+| Method | Path | Purpose | Request body | Response |
+|---|---|---|---|---|
+| GET | `/api/health` | Health check | — | `{status, version}` |
+| POST | `/api/chat/` | Send a message, get streamed response | `{message, session_id?, stream?}` | SSE events: `start`, `message`, `tool_result`, `done` |
+| GET | `/api/sessions/` | List recent sessions | — | `[{id, title, started_at, message_count, ...}]` |
+| GET | `/api/sessions/{id}` | Get session details + messages | — | `{id, messages: [...], ...}` |
+| DELETE | `/api/sessions/{id}` | Delete a session | — | `{deleted: true}` |
+| GET | `/api/skills/` | List all loaded skills | — | `[{name, description, tags, category}]` |
+| POST | `/api/skills/{name}/invoke` | Invoke a skill (returns the prompt it would inject) | `{arguments?}` | `{prompt: str, name: str}` |
+| GET | `/api/tools/` | List registered tools + enabled/disabled | — | `[{name, toolset, enabled, schema}]` |
+| PUT | `/api/tools/{name}/enable` | Enable a tool | — | `{enabled: true}` |
+| PUT | `/api/tools/{name}/disable` | Disable a tool | — | `{enabled: false}` |
+| GET | `/api/config/` | Get current config | — | `{agent: {...}, memory: {...}, ...}` |
+| PUT | `/api/config/` | Update config (subset) | `{...}` | `{updated: true}` |
+| POST | `/api/config/reload` | Force reload from disk | — | `{reloaded: true}` |
+| POST | `/api/memory/recall` | Search long-term memory | `{query, top_k?}` | `[{memory_id, content, score}]` |
+| POST | `/api/memory/store` | Manually store a memory | `{id, content, kind?, tags?}` | `{stored: true, obsidian_path}` |
+| GET | `/api/memory/obsidian/relations` | Get the wikilink graph | — | `{memory_id: [related_ids]}` |
+| POST | `/api/rag/index` | Index a directory | `{path, recursive?}` | `{indexed_files, indexed_chunks}` |
+| POST | `/api/rag/query` | Run a retrieval query | `{query, strategies?, top_k?}` | `[{text, source, score, strategy}]` |
+| GET | `/api/traces/recent` | List recent trace files | `?limit=10` | `[{file, started_at, iterations, ...}]` |
+
+#### 7.4.4 React component tree
+
+```
+src/
+├── App.tsx
+│   ├── <Sidebar />          (left nav: chat / skills / memory / config)
+│   ├── <MainPanel />        (switches based on sidebar selection)
+│   │   ├── ChatPanel
+│   │   │   ├── MessageList
+│   │   │   │   └── MessageItem (renders user / assistant / tool)
+│   │   │   │       ├── TextBubble
+│   │   │   │       ├── ToolCallCard (collapsible)
+│   │   │   │       └── ReasoningBlock (o1/o3 reasoning, collapsible)
+│   │   │   ├── Composer (textarea + send button)
+│   │   │   └── StatusBar (model, session id, iteration count)
+│   │   ├── SkillsPanel
+│   │   │   ├── SkillList
+│   │   │   └── SkillDetail (with "Invoke" button)
+│   │   ├── MemoryPanel
+│   │   │   ├── MemoryGraph (D3 or react-force-graph visualization of wikilink graph)
+│   │   │   ├── MemoryList
+│   │   │   └── MemorySearchBar
+│   │   ├── RagPanel
+│   │   │   ├── IndexForm
+│   │   │   └── QueryForm + ResultsTable
+│   │   ├── ConfigPanel
+│   │   │   ├── ConfigEditor (form-based, edits YAML/JSON)
+│   │   │   └── ReloadButton
+│   │   └── DoctorPanel (run hello-agent doctor, show results)
+│   └── <TopBar />           (logo, current profile, settings cog)
+├── store/
+│   ├── chat.ts              (nanostore: messages, streaming buffer)
+│   ├── session.ts           (current session_id, list)
+│   └── config.ts            (loaded config)
+├── hooks/
+│   ├── useChatStream.ts     (SSE consumer for /api/chat)
+│   ├── useSession.ts        (load + switch sessions)
+│   └── useTools.ts          (enable/disable tools)
+└── api/
+    ├── client.ts            (axios wrapper, all paths)
+    └── types.ts             (TypeScript types matching backend Pydantic)
+```
+
+**Stack**: Vite + React 18 + TypeScript + nanostores + axios + D3 (for the memory graph). Build with `npm run build` → outputs to `web-ui/dist/`, copied to `hello_agent/web/static/` by a post-build script.
+
+### 7.5 Windows Tray + Autostart
+
+#### `windows/tray.py`
+
+```python
+# Use pystray + Pillow
+import threading
+from pystray import Icon, Menu, MenuItem
+from PIL import Image, ImageDraw
+from hello_agent.core.logging import get_logger
+from hello_agent.core.config import get_config
+import subprocess
+import webbrowser
+
+logger = get_logger(__name__)
+
+def _create_icon_image() -> Image.Image:
+    """Generate a 64x64 icon at runtime (no external assets)."""
+    img = Image.new("RGB", (64, 64), color="white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((8, 8, 56, 56), fill="#1f77b4")
+    draw.text((20, 20), "HA", fill="white")
+    return img
+
+def start_tray(web_port: int) -> Icon:
+    """Start the system tray icon. Runs in a background thread."""
+    cfg = get_config()
+    env = get_config()  # for ports
+
+    def on_open_web(icon, item):
+        webbrowser.open(f"http://127.0.0.1:{web_port}")
+
+    def on_new_chat(icon, item):
+        webbrowser.open(f"http://127.0.0.1:{web_port}/?new=1")
+
+    def on_doctor(icon, item):
+        # Open a terminal running hello-agent doctor
+        subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", "hello-agent doctor"])
+
+    def on_quit(icon, item):
+        icon.stop()
+        # Trigger graceful shutdown of web server
+        from hello_agent.cli.serve import request_shutdown
+        request_shutdown()
+
+    menu = Menu(
+        MenuItem("Open Web UI", on_open_web, default=True),
+        MenuItem("New Chat", on_new_chat),
+        Menu.SEPARATOR,
+        MenuItem("Run Doctor", on_doctor),
+        Menu.SEPARATOR,
+        MenuItem("Quit", on_quit),
+    )
+
+    icon = Icon("hello-agent", _create_icon_image(), "hello-agent", menu)
+    threading.Thread(target=icon.run, daemon=True, name="tray-icon").start()
+    logger.info("System tray icon started")
+    return icon
+
+def stop_tray(icon: Icon):
+    icon.stop()
+```
+
+#### `windows/autostart.py`
+
+```python
+import winreg
+from hello_agent.core.logging import get_logger
+from hello_agent.core.paths import get_hello_agent_home
+
+logger = get_logger(__name__)
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APP_NAME = "hello-agent"
+
+def enable_autostart() -> bool:
+    """Add hello-agent to HKCU\...\Run for current user."""
+    cmd = f'uv --directory "{get_hello_agent_home().parent}" run hello-agent serve'
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
+        logger.info("Autostart enabled")
+        return True
+    except OSError as e:
+        logger.error(f"Failed to enable autostart: {e}")
+        return False
+
+def disable_autostart() -> bool:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, APP_NAME)
+        logger.info("Autostart disabled")
+        return True
+    except FileNotFoundError:
+        return True  # wasn't set
+    except OSError as e:
+        logger.error(f"Failed to disable autostart: {e}")
+        return False
+
+def is_autostart_enabled() -> bool:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ) as key:
+            winreg.QueryValueEx(key, APP_NAME)
+        return True
+    except FileNotFoundError:
+        return False
+```
+
+**Acceptance**:
+- `hello-agent autostart enable` writes to registry
+- `hello-agent autostart disable` removes the entry
+- After reboot, hello-agent starts in the background (no console window if started via NSSM or as a service)
+
+### 7.6 MCP Server (tools exposed)
+
+Run `hello-agent mcp serve` to start an MCP stdio server that exposes all of hello-agent's tools.
+
+**Tools exposed** (the full list v0.1 ships):
+1. `read_file` — read a file (with size limit)
+2. `write_file` — write content atomically
+3. `edit_file` — find/replace with optimistic lock
+4. `run_powershell` — execute PowerShell command
+5. `run_cmd` — execute cmd.exe command
+6. `web_search` — search the web
+7. `web_fetch` — fetch URL → markdown
+8. `document_parser` — parse PDF/DOCX/XLSX/etc.
+9. `todowrite` — task list
+10. `notify` — Windows toast notification
+11. `task_delegate` — spawn subagent (router picks child agent type)
+
+**Excluded from MCP** (security / UX reasons):
+- Memory tools (long_term / obsidian_sync) — these are user-private, MCP clients shouldn't poke at them
+- RAG index/query — v0.1 doesn't expose; v0.3+ can add if requested
+- Skills management — v0.1 doesn't expose
+
+#### `protocols/mcp_server.py`
+
+```python
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+import json
+import asyncio
+from hello_agent.tools.registry import ToolRegistry
+# Register all builtin tools (do this once at import)
+from hello_agent.tools.builtin import document_parser, file_tools, shell_tool, web_search, web_fetch, todowrite, notify
+
+def build_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    document_parser.register(registry)
+    file_tools.register(registry)
+    shell_tool.register(registry)
+    web_search.register(registry)
+    web_fetch.register(registry)
+    todowrite.register(registry)
+    notify.register(registry)
+    return registry
+
+async def serve_stdio():
+    registry = build_registry()
+    server = Server("hello-agent")
+
+    @server.list_tools()
+    async def list_tools():
+        return [
+            Tool(
+                name=tool.name,
+                description=tool.schema.description,
+                inputSchema=tool.schema.parameters,
+            )
+            for tool in registry.list_all()  # all, not enabled_only
+        ]
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict):
+        result = registry.execute(name, arguments, session_id="mcp")
+        if not result.success:
+            return [TextContent(type="text", text=f"ERROR: {result.error}\n{result.hint or ''}")]
+        return [TextContent(type="text", text=json.dumps(result.data, ensure_ascii=False, indent=2))]
+
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+if __name__ == "__main__":
+    asyncio.run(serve_stdio())
+```
+
+**Acceptance**:
+- Running `hello-agent mcp serve` exposes all 11 tools to a connected MCP client (e.g., Claude Desktop)
+- Tool calls return JSON-serialized results
+- Errors return `ERROR: <message>` text in the response
+
+---
+
+(End of part 4. See docs/ENGINEERING.md for parts 5+.)
+
+
+---
+
+## 8. v0.1 5-Day Breakdown with Daily Deliverables
+
+This is the implementation schedule. Each day has a tight scope; if you
+finish early, **stop** — don't pull v0.2 work forward.
+
+### Day 1 — Project scaffolding + core abstractions
+
+**Goal**: `uv run hello-agent --version` works, and `hello-agent chat "hello"` streams a response from the LLM.
+
+**Deliverables**:
+
+| File | Status | Acceptance |
+|---|---|---|
+| `pyproject.toml` | NEW | `uv sync --all-extras` succeeds; `uv.lock` is generated |
+| `.env.example` | NEW | All sections present (LLM, MinerU, Obsidian, RAG, Web, Misc) |
+| `.gitignore` | NEW | Python + venv + data dirs ignored |
+| `LICENSE` | NEW | MIT, copyright peckerpro |
+| `README.md` | NEW | Quick-start commands work; v0.1 status table |
+| `hello_agent/__init__.py` | NEW | `__version__ = "0.1.0"` |
+| `hello_agent/__main__.py` | NEW | Calls `cli.main:main` |
+| `hello_agent/core/paths.py` | NEW | `get_hello_agent_home()` returns `C:\Users\<user>\AppData\Local\hello-agent\` on Windows |
+| `hello_agent/core/config.py` | NEW | `get_config()` returns populated `HelloAgentConfig` |
+| `hello_agent/core/llm.py` | NEW | `LLMClient("hello").chat([Message(role=Role.USER, content="hi")])` returns a `ChatCompletion` |
+| `hello_agent/core/types.py` | NEW | All dataclasses importable |
+| `hello_agent/core/logging.py` | NEW | `setup_logging()` creates `logs/agent.log` etc. |
+| `hello_agent/core/exceptions.py` | NEW | All exception types importable |
+| `hello_agent/agents/simple.py` | NEW | `SimpleAgent.run("hello")` returns a state with 1 assistant message |
+| `hello_agent/cli/main.py` | NEW | `hello-agent --version` prints `hello-agent 0.1.0` |
+| `hello_agent/cli/chat.py` | NEW | `hello-agent chat "hi"` streams response from LLM |
+| `hello_agent/cli/doctor.py` | NEW | `hello-agent doctor` checks env (Python, uv, LLM_API_KEY, network) |
+| `tests/test_core/test_config.py` | NEW | 5+ tests for config loading |
+| `tests/test_core/test_llm.py` | NEW | 3+ tests using a fake LLM endpoint |
+
+**Verification at end of Day 1**:
+```powershell
+uv sync --all-extras
+uv run hello-agent --version
+# Expected: hello-agent 0.1.0
+
+uv run hello-agent doctor
+# Expected: All checks pass, with LLM_API_KEY = sk-***...
+
+uv run hello-agent chat "Hello, what's 2+2?"
+# Expected: Streams "4" or similar within 10 seconds
+```
+
+### Day 2 — Tool registry + document parser + file/shell tools
+
+**Goal**: Agent can call tools. End-to-end: `hello-agent chat "read the file C:\test.txt"` works.
+
+**Deliverables**:
+
+| File | Status | Acceptance |
+|---|---|---|
+| `hello_agent/tools/base.py` | NEW | `@tool` decorator + `Tool` ABC |
+| `hello_agent/tools/registry.py` | NEW | `registry.register(...)` + `registry.execute(name, args)` works |
+| `hello_agent/tools/response.py` | NEW | `ToolResponse` dataclass with `ok()` / `fail()` constructors |
+| `hello_agent/tools/circuit_breaker.py` | NEW | 5+ tests for open/close/half-open transitions |
+| `hello_agent/tools/permission.py` | NEW | `confirm_in_session()` works |
+| `hello_agent/tools/toolsets.py` | NEW | DEFAULT toolset includes file_tools, shell_tool, etc. |
+| `hello_agent/tools/builtin/__init__.py` | NEW | Empty |
+| `hello_agent/tools/builtin/document_parser.py` | NEW | `parse_document("test.pdf")` returns text; falls back to markitdown if MinerU key absent |
+| `hello_agent/tools/builtin/file_tools.py` | NEW | read_file / write_file / edit_file all work; edit_file uses optimistic lock |
+| `hello_agent/tools/builtin/shell_tool.py` | NEW | `run_powershell("Get-Date")` returns current date as string |
+| `hello_agent/tools/builtin/notify.py` | NEW | On Windows, fires a toast notification |
+| `hello_agent/agents/react.py` | NEW | `ReActAgent.run("read the file test.txt")` calls read_file, returns content |
+| `hello_agent/tools/builtin/web_search.py` | NEW | SearXNG / DuckDuckGo fallback works |
+| `hello_agent/tools/builtin/web_fetch.py` | NEW | `web_fetch("https://example.com")` returns markdown |
+| `hello_agent/tools/builtin/todowrite.py` | NEW | `todowrite([{...}])` updates in-session task list |
+| `hello_agent/tools/builtin/task_tool.py` | NEW | `delegate_task("summarize X")` spawns a sub-ReAct agent |
+| `tests/test_tools/*.py` | NEW | 15+ tests covering registry, response, document_parser, file_tools, shell_tool |
+
+**Verification at end of Day 2**:
+```powershell
+uv run hello-agent chat "Read the file C:\Users\$env:USERNAME\.hello-agent\config.yaml and tell me the agent.default_type"
+# Expected: Streams response, calls read_file tool, returns "react" (or similar)
+
+uv run hello-agent chat "What time is it? (use PowerShell)"
+# Expected: Calls run_powershell, returns current time
+```
+
+### Day 3 — Context engineering + state store
+
+**Goal**: Long conversations work. Past 50 messages don't blow up context. Old sessions are searchable.
+
+**Deliverables**:
+
+| File | Status | Acceptance |
+|---|---|---|
+| `hello_agent/core/state.py` | NEW | `SessionDB()` initializes, creates tables + FTS5 + trigram |
+| `hello_agent/context/history.py` | NEW | `HistoryManager` supports add/get/sliding-window |
+| `hello_agent/context/token_counter.py` | NEW | `count_tokens([Message, ...])` returns int (uses tiktoken) |
+| `hello_agent/context/truncator.py` | NEW | `truncate(msg, max_lines=50, strategy="head_tail")` works |
+| `hello_agent/context/builder.py` | NEW | `build_prompt(state, tools, memory, rag)` returns assembled messages |
+| `hello_agent/agents/react.py` (UPDATE) | NEW | Now uses `builder.build_prompt()` |
+| `tests/test_context/*.py` | NEW | 10+ tests for history, counter, truncator, builder |
+| `tests/test_core/test_state.py` | NEW | 5+ tests for SessionDB (init, insert, search) |
+
+**Verification at end of Day 3**:
+```powershell
+# Start a long conversation
+uv run hello-agent chat "Remember my favorite color is blue" --session test1
+uv run hello-agent chat "What's my favorite color?" --session test1
+# Expected: Returns "blue"
+
+# Search past sessions
+sqlite3 ~/.hello-agent/hello_agent.db "SELECT content FROM messages_fts WHERE messages_fts MATCH 'blue' LIMIT 5"
+# Expected: Returns 1+ rows mentioning blue
+```
+
+### Day 4 — Memory (Obsidian) + RAG (advanced retrieval)
+
+**Goal**: Long-term memory persists to Obsidian vault. Documents get indexed. Retrieval uses all 4 strategies.
+
+**Deliverables**:
+
+| File | Status | Acceptance |
+|---|---|---|
+| `hello_agent/memory/short_term.py` | NEW | `add_fact("name", "value")` + `get_fact("name")` |
+| `hello_agent/memory/long_term.py` | NEW | `LongTermMemory.store(...)` writes to `memories` table |
+| `hello_agent/memory/episodic.py` | NEW | `record_episode(session_id, summary)` works |
+| `hello_agent/memory/obsidian_sync.py` | NEW | `ObsidianSync.export_memory(...)` writes a markdown file with frontmatter + wikilinks |
+| `hello_agent/memory/git_sync.py` | NEW | `GitSync.start()` runs background thread, auto-commits every 5 min |
+| `hello_agent/rag/loader.py` | NEW | `load_file("test.pdf")` returns text |
+| `hello_agent/rag/chunker.py` | NEW | `chunk(text, source)` returns list of `Chunk` |
+| `hello_agent/rag/embedder.py` | NEW | `embedder.embed(["hello"])` returns 1536-dim vector |
+| `hello_agent/rag/vector_store.py` | NEW | `add(chunks, embeddings)`, `query(emb, top_k)` |
+| `hello_agent/rag/retrieval.py` | NEW | `retrieve("query")` runs all 4 strategies, returns top 8 |
+| `hello_agent/rag/index_cli.py` | NEW | `hello-agent rag index <path>` walks a dir |
+| `tests/test_memory/*.py` | NEW | 10+ tests |
+| `tests/test_rag/*.py` | NEW | 15+ tests (mock embedder + vector_store for unit tests) |
+
+**Verification at end of Day 4**:
+```powershell
+# Index a directory
+uv run hello-agent rag index D:\path\to\docs
+# Expected: "Indexed 42 files, 1234 chunks"
+
+# Query
+uv run hello-agent rag query "What is the project structure?"
+# Expected: Top 5 relevant chunks with scores
+
+# Memory export
+uv run hello-agent chat "Remember: I love Python" --session test
+ls ~/Documents/ObsidianVault/memory/
+# Expected: A new .md file with wikilink syntax
+
+# Open the vault in Obsidian — graph view should show the new note
+```
+
+### Day 5 — Web UI + tray + autostart + final polish
+
+**Goal**: `hello-agent serve` starts the web UI on `http://127.0.0.1:8648`. Tray icon appears. Autostart works. v0.1 is releasable.
+
+**Deliverables**:
+
+| File | Status | Acceptance |
+|---|---|---|
+| `hello_agent/web/server.py` | NEW | `app` instance, `/api/health` returns 200 |
+| `hello_agent/web/routes/chat.py` | NEW | `POST /api/chat/` streams SSE |
+| `hello_agent/web/routes/sessions.py` | NEW | `GET /api/sessions/` lists sessions |
+| `hello_agent/web/routes/skills.py` | NEW | `GET /api/skills/` lists skills |
+| `hello_agent/web/routes/tools.py` | NEW | `GET /api/tools/` + enable/disable |
+| `hello_agent/web/routes/config.py` | NEW | `GET/PUT /api/config/` |
+| `hello_agent/cli/serve.py` | NEW | `hello-agent serve` starts uvicorn + tray |
+| `hello_agent/windows/tray.py` | NEW | `start_tray(8648)` puts icon in system tray |
+| `hello_agent/windows/autostart.py` | NEW | `enable_autostart()` writes registry |
+| `hello_agent/protocols/mcp_client.py` | NEW | `connect(["npx", "-y", "@modelcontextprotocol/server-filesystem", "."])` adds filesystem tools |
+| `hello_agent/protocols/mcp_server.py` | NEW | `hello-agent mcp serve` runs stdio server |
+| `hello_agent/skills/loader.py` | NEW | `load_skill("file_organize")` returns Skill |
+| `hello_agent/skills/builtin/file_organize.md` | NEW | SKILL.md with full Procedure section |
+| `hello_agent/skills/builtin/daily_review.md` | NEW | SKILL.md |
+| `hello_agent/skills/builtin/obsidian_lookup.md` | NEW | SKILL.md |
+| `web-ui/` | NEW | Full React project (vite + react + ts) |
+| `examples/01_quick_chat.py` ... `examples/05_advanced_retrieval.py` | NEW | 5 runnable examples |
+| `scripts/dev_bootstrap.ps1` | NEW | One-shot Windows setup |
+| `docs/WINDOWS_SETUP.md` | NEW | Windows-specific install notes |
+| `docs/CHANGELOG.md` | NEW | v0.1.0 release notes |
+| `tests/test_web/*.py` | NEW | 5+ tests using FastAPI TestClient |
+| `tests/test_windows/*.py` | NEW | Mocked tests (skip on non-Windows) |
+
+**Verification at end of Day 5**:
+```powershell
+# Start the web server
+uv run hello-agent serve
+# Expected: "Web UI running at http://127.0.0.1:8648" + tray icon appears
+
+# Open in browser
+start http://127.0.0.1:8648
+# Expected: Web UI loads, can send a message, sees streamed response
+
+# MCP server test (in another terminal)
+uv run hello-agent mcp serve | Test-McpServer.ps1
+# Or: connect from Claude Desktop's config
+
+# Autostart
+uv run hello-agent autostart enable
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v hello-agent
+# Expected: Value present, points to "uv --directory ... run hello-agent serve"
+```
+
+### Day 5+ (post-v0.1) — Optional polish
+
+These are NOT v0.1 scope; defer to v0.2:
+- Skin/theme system
+- Plugin system (drop a .py in `~/.hello_agent/plugins/`)
+- Conversation compression (LLM-summarized old messages)
+- Subagent parallelization
+- Plan-and-Solve / Reflection agents (we have the base classes, but the actual implementations)
+- Web UI component polish (drag-drop file upload, etc.)
+- Local embedding model support
+- More RAG backends (BM25, ElasticSearch, etc.)
+
+---
+
+## 9. Local Development Flow
+
+### 9.1 Day-to-day commands
+
+```powershell
+# Sync dependencies (after pulling new commits)
+uv sync --all-extras
+
+# Run the CLI in dev mode
+uv run hello-agent chat
+
+# Run a one-off command
+uv run hello-agent run "summarize this PDF"
+
+# Run tests
+uv run pytest -q
+
+# Run a single test
+uv run pytest tests/test_tools/test_document_parser.py -v
+
+# Run with coverage
+uv run pytest --cov=hello_agent --cov-report=term-missing
+
+# Lint + format
+uv run ruff check hello_agent tests
+uv run ruff format hello_agent tests
+
+# Type check (incremental)
+uv run ty check hello_agent
+
+# Build the React UI (one-off)
+cd web-ui
+npm install
+npm run build
+cd ..
+
+# Clean state (nuke the home dir)
+uv run hello-agent doctor --reset-state
+# Or manually: Remove-Item -Recurse ~\.hello-agent
+```
+
+### 9.2 Git workflow
+
+This worktree is `wt-e5bdcb08` on branch `wt/e5bdcb08`. Commits stay local to the worktree until the user merges to master.
+
+```powershell
+# Stage and commit (per-day is a good cadence)
+git add -A
+git commit -m "v0.1 day 1: project scaffolding + core abstractions"
+
+# Push to the user-controlled remote (NOT done in v0.1 — let the user do this)
+# git push origin wt/e5bdcb08
+```
+
+**Commit message convention** (suggested, not enforced):
+- `v0.1 day N: <one-line summary>` for milestone commits
+- `<scope>: <change>` for individual feature commits (e.g. `tools: add optimistic lock to edit_file`)
+
+### 9.3 Debugging tips
+
+1. **LLM call failing**: enable DEBUG logging, look at `~/.hello-agent/logs/llm.log`. Common issues:
+   - API key wrong / expired
+   - base_url wrong (e.g., `https://api.openai.com/` without `/v1` suffix)
+   - Model name not supported by provider
+2. **Tool not found**: run `uv run hello-agent tools list` to see registered tools. Check `~/.hello-agent/config.yaml` `tools.enabled` list.
+3. **Permission denied on file**: the file is marked dangerous and needs confirmation. Either remove from `tools.require_confirmation` or run with `dangerous_allow_all: true` in config (dev only).
+4. **SQLite corruption**: run `uv run hello-agent doctor --vacuum`. If still broken, `rm ~/.hello-agent/hello_agent.db` to reset (loses session history).
+5. **Obsidian sync stuck**: check `~/.hello-agent/logs/agent.log` for git errors. The token may be expired. `uv run hello-agent memory sync --force` to manually trigger.
+
+### 9.4 Test conventions
+
+- All tests use stdlib `unittest.mock` or pytest fixtures; no live network calls
+- LLM tests use a `FakeLLMClient` fixture in `tests/conftest.py`
+- Each module has a corresponding test file
+- Run `uv run pytest --cov=hello_agent --cov-fail-under=60` to enforce 60% coverage minimum (v0.1 target)
+- For windows-specific code, use `@pytest.mark.windows` and skip on non-Windows
+
+### 9.5 Release checklist (v0.1)
+
+Before tagging v0.1:
+
+- [ ] All Day 1-5 deliverables complete
+- [ ] `uv run pytest` passes (target 60+ tests)
+- [ ] `uv run pytest --cov=hello_agent --cov-fail-under=60` passes
+- [ ] `uv run ruff check hello_agent tests` passes (no errors)
+- [ ] `uv run ty check hello_agent` passes (no errors)
+- [ ] `uv run hello-agent doctor` passes
+- [ ] `uv run hello-agent chat "hello"` streams a response
+- [ ] `uv run hello-agent serve` starts web UI; can send a message
+- [ ] `hello-agent mcp serve` runs (test with `mcp dev` or Claude Desktop)
+- [ ] Memory export to Obsidian works; graph view shows the note
+- [ ] RAG index + query works on a test directory
+- [ ] `README.md` is up to date
+- [ ] `CHANGELOG.md` has v0.1.0 entry
+- [ ] `LICENSE` is MIT
+- [ ] `pyproject.toml` version is `0.1.0`
+- [ ] Git tag: `git tag v0.1.0`
+
+---
+
+## 10. Verification & Acceptance Criteria
+
+The v0.1 product is considered DONE when ALL of these pass:
+
+### 10.1 Functional acceptance
+
+| Feature | Test |
+|---|---|
+| LLM chat works | `hello-agent chat "Hello"` streams a response within 10s |
+| Tool calling works | `hello-agent chat "Read the file foo.txt"` returns the file content |
+| Document parsing | `hello-agent chat "Summarize this PDF"` returns a summary |
+| File tools | `hello-agent chat "Write 'hello' to test.txt"` creates the file |
+| Shell tools | `hello-agent chat "Get-Date"` returns current time |
+| Web search | `hello-agent chat "Search for X"` returns search results |
+| Web fetch | `hello-agent chat "Fetch https://example.com"` returns page content |
+| Long-term memory | After 5+ turns, agent recalls earlier facts |
+| Obsidian sync | `hello-agent chat "Remember: I love Python"` creates a note in the vault |
+| Obsidian graph | Opening the vault in Obsidian shows the new note with links |
+| RAG indexing | `hello-agent rag index <dir>` indexes N files |
+| RAG query | `hello-agent rag query "X"` returns top 5 chunks |
+| All 4 retrieval strategies | `hello-agent rag query --strategies=rewrite,hyde,multi_query,rerank` runs all 4 |
+| Web UI | `hello-agent serve` → `http://127.0.0.1:8648` loads |
+| Web UI streaming | Browser sees message tokens arrive in real time |
+| Web UI memory panel | Can see the wikilink graph visualized |
+| System tray | Icon appears in Windows tray; menu has Open/Quit |
+| Autostart | `hello-agent autostart enable` writes registry; reboot → hello-agent runs |
+| MCP server | `hello-agent mcp serve` works; can be connected to from Claude Desktop |
+| MCP client | `hello-agent mcp connect ...` adds external tools |
+
+### 10.2 Non-functional acceptance
+
+| Aspect | Target |
+|---|---|
+| Time to first response | < 10 seconds (excluding LLM latency) |
+| Cold start time | < 3 seconds (uv run + import) |
+| Memory footprint | < 500MB at idle |
+| LLM call p50 latency | < 3s (depends on provider) |
+| Test coverage | ≥ 60% (v0.1), ≥ 80% (v0.3+) |
+| Lint clean | `ruff check` reports 0 errors |
+| Type check clean | `ty check` reports 0 errors |
+| Documentation | Every public function has a docstring |
+| Windows installer | `scripts/dev_bootstrap.ps1` sets up everything from scratch |
+| Cross-platform | Runs on Windows 10/11; best-effort on macOS/Linux for dev |
+
+### 10.3 Manual smoke test sequence
+
+```powershell
+# 1. Setup
+irm https://astral.sh/uv/install.ps1 | iex
+git clone https://github.com/peckerpro/hello-agent-2.git
+cd hello-agent-2
+uv sync --all-extras
+Copy-Item .env.example .env
+# Edit .env to add LLM_API_KEY, MINERU_API_KEY (optional), OBSIDIAN_VAULT_PATH
+
+# 2. Verify
+uv run hello-agent --version
+uv run hello-agent doctor
+
+# 3. Basic chat
+uv run hello-agent chat "Hello, what's 2+2?"
+
+# 4. Tool use
+uv run hello-agent chat "Create a file at test.txt with the content 'hello world'"
+
+# 5. Document parsing (need a PDF handy)
+uv run hello-agent chat "Summarize the PDF at C:\path\to\doc.pdf"
+
+# 6. Memory
+uv run hello-agent chat "Remember: my favorite color is blue" --session smoke
+uv run hello-agent chat "What's my favorite color?" --session smoke
+# Expected: "blue"
+
+# 7. Obsidian
+# Check the vault: ls %OBSIDIAN_VAULT_PATH%\memory
+# Open in Obsidian: should see a graph
+
+# 8. RAG
+mkdir test-docs
+echo "# Python is great" > test-docs\python.md
+echo "# Rust is fast" > test-docs\rust.md
+uv run hello-agent rag index test-docs
+uv run hello-agent rag query "Which language is great?"
+
+# 9. Web UI
+uv run hello-agent serve
+# Open browser to http://127.0.0.1:8648
+# Send a message; verify streaming
+
+# 10. MCP (optional, requires Claude Desktop)
+# Edit Claude Desktop config to add:
+# {
+#   "mcpServers": {
+#     "hello-agent": {
+#       "command": "uv",
+#       "args": ["--directory", "C:\\path\\to\\hello-agent-2", "run", "hello-agent", "mcp", "serve"]
+#     }
+#   }
+# }
+# Restart Claude Desktop; should see 11 hello-agent tools
+
+# 11. Autostart
+uv run hello-agent autostart enable
+# Reboot; verify hello-agent tray icon appears
+```
+
+---
+
+## 11. Reference: hermes-agent Source Locations
+
+All upstream files are at `https://github.com/NousResearch/hermes-agent` (main branch). When implementing a module, fetch the relevant upstream file first via webfetch:
+
+```powershell
+# Example: read the hermes registry pattern
+curl -sSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/tools/registry.py | head -100
+```
+
+### Index of upstream files we borrow from
+
+| Pattern | Upstream file | LOC | Notes |
+|---|---|---|---|
+| Path resolution | `hermes_constants.py` | 200 | 1:1 borrow |
+| SQLite + FTS5 | `hermes_state.py` | 1900 | 1:1 borrow + add 3 tables |
+| Logging | `hermes_logging.py` | 300 | Adapt to loguru |
+| Provider profiles | `providers/openai.py` | 400 | Simplified to OpenAI-only |
+| LLM call | `agent/chat_completion_helpers.py` | 600 | Just use the openai SDK directly |
+| Agent loop | `run_agent.py` (AIAgent class) | 12000 | Simplify to ~500 LOC; drop gateway stuff |
+| Tool registry | `tools/registry.py` | 200 | 1:1 borrow |
+| Toolsets | `toolsets.py` | 400 | Extract to its own file |
+| Terminal backends | `tools/environments/local.py` | 600 | Local only for v0.1 |
+| File tools | `tools/file.py` | 1500 | 1:1 borrow |
+| Shell tool | `tools/terminal_tool.py` | 800 | Adapt to PowerShell default |
+| Web search | `tools/web_search.py` | 600 | New: SearXNG/DDG; skip Firecrawl |
+| Web fetch | `tools/web_extract.py` | 500 | New: httpx + selectolax |
+| Todo | `tools/todo_tool.py` | 200 | 1:1 borrow |
+| Subagent | `tools/delegate_tool.py` | 1000 | Borrow shape, drop kanban |
+| Context engine | `agent/context_engine.py` | 800 | Copy structure |
+| History | `agent/history_manager.py` | 400 | Borrow logic |
+| Memory provider | `agent/memory_provider.py` | 200 | v0.3+ |
+| Memory manager | `agent/memory_manager.py` | 600 | v0.3+ |
+| Compression | `agent/conversation_compression.py` | 1000 | v0.3+ |
+| MCP server | `mcp_serve.py` | 400 | 1:1 borrow |
+| MCP client | `agent/mcp_client.py` | 600 | 1:1 borrow |
+| CLI | `hermes_cli/main.py` | 500 | Tiny version |
+| Commands | `hermes_cli/commands.py` | 400 | v0.3+ |
+| Skin engine | `hermes_cli/skin_engine.py` | 300 | v0.4+ |
+| Install script | `scripts/install.ps1` | 200 | Drop MinGit |
+| Skills (loader) | `agent/skill_commands.py` | 300 | 1:1 borrow |
+| Skills (curator) | `agent/curator.py` | 500 | v0.6+ |
+| Tests | `tests/` directory | 17000 | We have 150 tests; hermes has more |
+
+### Upstream file paths to webfetch
+
+```
+hermes_constants.py
+hermes_state.py
+hermes_logging.py
+providers/openai.py
+agent/chat_completion_helpers.py
+run_agent.py
+tools/registry.py
+toolsets.py
+tools/environments/local.py
+tools/file.py
+tools/terminal_tool.py
+tools/web_search.py
+tools/web_extract.py
+tools/todo_tool.py
+tools/delegate_tool.py
+agent/context_engine.py
+agent/history_manager.py
+agent/skill_commands.py
+mcp_serve.py
+hermes_cli/main.py
+```
+
+These are the files Codex should read first, in this order:
+1. `hermes_state.py` (most important — the SQLite pattern)
+2. `tools/registry.py` (the tool system)
+3. `run_agent.py` (the agent loop; skim for the loop shape, don't try to understand all 12k LOC)
+4. `toolsets.py` (toolset structure)
+5. `agent/context_engine.py` (context assembly)
+6. The rest as needed
+
+---
+
+## Appendix A: Quick Reference — Code Patterns to Use
+
+### A.1 Reading a config value
+```python
+from hello_agent.core.config import get_config
+cfg = get_config()
+timeout = cfg.terminal.shell_timeout_seconds  # 60
+```
+
+### A.2 Calling the LLM
+```python
+from hello_agent.core.llm import LLMClient
+from hello_agent.core.types import Message, Role
+
+llm = LLMClient()  # reads from .env
+response = llm.chat([
+    Message(role=Role.SYSTEM, content="You are helpful."),
+    Message(role=Role.USER, content="Hello!"),
+])
+print(response.choices[0].message.content)
+```
+
+### A.3 Registering a tool
+```python
+from hello_agent.tools.registry import registry
+from hello_agent.core.types import ToolResponse
+
+def my_tool(arg1: str) -> ToolResponse:
+    """Tool description here."""
+    return ToolResponse.ok({"result": f"processed {arg1}"})
+
+registry.register(
+    name="my_tool",
+    toolset="custom",
+    schema={
+        "name": "my_tool",
+        "description": "Does X with Y.",
+        "parameters": {
+            "type": "object",
+            "properties": {"arg1": {"type": "string", "description": "The input"}},
+            "required": ["arg1"],
+        },
+    },
+    handler=lambda args, **kw: my_tool(args.get("arg1", "")),
+    dangerous=False,
+)
+```
+
+### A.4 Logging
+```python
+from hello_agent.core.logging import get_logger
+logger = get_logger(__name__)
+logger.info("Simple message")
+logger.bind(category="llm").info("LLM call details: {prompt}", prompt=prompt)
+```
+
+### A.5 Persisting a message to the session store
+```python
+from hello_agent.core.state import SessionDB
+db = SessionDB()  # uses ~/.hello-agent/hello_agent.db
+db.append_message(session_id=session_id, role="user", content="hello")
+```
+
+### A.6 Storing a long-term memory
+```python
+from hello_agent.memory.obsidian_sync import ObsidianSync
+sync = ObsidianSync()
+sync.export_memory(
+    memory_id="favorite_editor",
+    content="I love VS Code because of its extensions.",
+    kind="preference",
+    title="Favorite Editor",
+    tags=["tools", "editor"],
+)
+```
+
+### A.7 Running a RAG query
+```python
+from hello_agent.rag.embedder import Embedder
+from hello_agent.rag.vector_store import VectorStore
+from hello_agent.rag.retrieval import retrieve
+from hello_agent.core.llm import LLMClient
+
+embedder = Embedder()
+store = VectorStore()  # uses CHROMADB_PERSIST_DIR
+llm = LLMClient()
+
+results = retrieve(
+    query="What's the project structure?",
+    vector_store=store,
+    embedder=embedder,
+    llm=llm,
+    strategies=["rewrite", "hyde", "multi_query", "rerank"],
+    top_k=8,
+)
+for r in results:
+    print(f"[{r.score:.3f}] {r.source}: {r.text[:100]}")
+```
+
+---
+
+## Appendix B: Common Pitfalls to Avoid
+
+1. **Don't hardcode `~/.hello-agent/` paths** — always use `get_hello_agent_home()` and `display_hello_agent_home()`. This makes profile support work.
+2. **Don't write `open(path).read()`** — Windows defaults to cp1252 encoding; always `open(path, encoding="utf-8")` or `path.read_text(encoding="utf-8")`. The ruff PLW1514 rule catches this.
+3. **Don't bypass the tool registry** — agents MUST go through `tool_registry.execute()`. Don't import builtin tools directly from agent code; let the registry handle permission checks + circuit breakers.
+4. **Don't bypass session persistence** — all agent state changes go through `state.py`. The web UI must read from state.db, not from in-memory state.
+5. **Don't write to `~/.hello-agent/` directly** — go through the appropriate module (`memory/long_term.py` for facts, `memory/obsidian_sync.py` for Obsidian notes, etc.).
+6. **Don't hardcode LLM parameters** — read from `EnvSettings` (`.env`) or `Config` (config.yaml). User-overridable.
+7. **Don't write tools that take more than 5 parameters** — they get unwieldy. Group related params into a single `config` dict.
+8. **Don't use `print()` in tools or agents** — use `logger.info()` instead. v0.1's console output goes through rich for formatting; print() breaks the UI.
+9. **Don't add features not in this doc without writing the spec first** — if you find yourself wanting to add something, update §6 or §7 first, then implement. This prevents scope creep.
+10. **Don't add heavy dependencies to `[project.dependencies]`** — anything provider-specific (chromadb, markitdown, etc.) goes in `[project.optional-dependencies]` for lazy install. Smaller `dependencies` = smaller blast radius for supply-chain attacks.
+
+---
+
+## Appendix C: Glossary
+
+- **AGENTS.md** — Markdown file at the root of a project, used by AI coding agents to understand project conventions. hello-agent-2 should have one (see AGENTS.md template in v0.2+).
+- **ChromaDB** — Vector database for semantic search. Stores embeddings + metadata.
+- **FTS5** — SQLite's full-text search engine. Built-in since SQLite 3.9.
+- **HyDE** — Hypothetical Document Embeddings. RAG technique: generate a hypothetical answer, embed it, retrieve real chunks nearest to it.
+- **LLM** — Large Language Model. We use the OpenAI-compatible protocol.
+- **MCP** — Model Context Protocol. Standardized tool/agent communication protocol.
+- **Obsidian** — Note-taking app that uses plain Markdown files. Supports wikilinks, tags, graph view.
+- **Pyproject.toml** — Modern Python project configuration file (PEP 621).
+- **RAG** — Retrieval-Augmented Generation. Inject relevant chunks into the LLM prompt to ground its answers.
+- **ReAct** — Reasoning + Acting. Agent loop pattern where the LLM alternates between thinking and tool calls.
+- **RRF** — Reciprocal Rank Fusion. Algorithm to combine multiple ranked lists.
+- **SSE** — Server-Sent Events. One-way streaming protocol used for chat streaming.
+- **SKILL.md** — Hermes / agentskills.io standard for declarative agent skills.
+- **TOOLS.md** — Custom doc convention listing the tools an agent can use.
+- **trigram FTS5** — FTS5 tokenizer that creates 3-byte overlapping sequences, enabling substring search for CJK and other scripts.
+- **uv** — Fast Python package manager (https://github.com/astral-sh/uv).
+- **WAL** — Write-Ahead Logging. SQLite journal mode that allows concurrent readers + one writer.
+- **wikilink** — `[[Note Title]]` syntax in Obsidian, automatically creates a link between notes.
+
+---
+
+**END OF DOCUMENT**
+
+Total length: ~4000-5000 lines, ~150KB. Suitable for Codex CLI to consume in one pass.
+
+If anything is unclear or missing, ping the user for clarification. Do NOT guess on architectural decisions — the spec is the source of truth.
