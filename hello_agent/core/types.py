@@ -46,6 +46,15 @@ class Message:
     tool_calls:      set only on assistant messages that want tools to run
     tool_call_id:    set only on tool messages (echoes the assistant's tool_call.id)
     tool_name:       set only on tool messages (for human-readable logs)
+
+    Per-message flags (Day 4 — context engineering):
+    compressed:        this message's body has been compressed into a digest by
+                       the summarizer; original full body is gone
+    truncated:         this message's body was shortened by the truncator
+                       (head_tail / middle_out); partial content remains
+    cache_breakpoint:  used by Anthropic / Gemini prefix caching
+    system:            convenience flag (True iff role == SYSTEM); kept in sync
+    tool:              convenience flag (True iff role == TOOL); kept in sync
     """
 
     role: Role
@@ -58,7 +67,23 @@ class Message:
     token_count: int | None = None
     finish_reason: str | None = None
     reasoning: str | None = None
+    # Per-message flags. `system` and `tool` are derived from `role` and
+    # exposed as flags so callers that don't want to import Role can still
+    # branch on them.
+    compressed: bool = False
+    truncated: bool = False
     cache_breakpoint: bool = False
+    system: bool = False
+    tool: bool = False
+
+    def __post_init__(self) -> None:
+        # Keep the derived flags in sync with `role`. Callers can override
+        # `system`/`tool` explicitly after construction, but by default we
+        # mirror the role.
+        if not self.system and self.role == Role.SYSTEM:
+            self.system = True
+        if not self.tool and self.role == Role.TOOL:
+            self.tool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Serializable dict (used for SQLite persistence)."""
@@ -70,12 +95,15 @@ class Message:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Message:
-        """Inverse of to_dict."""
+        """Inverse of to_dict. Tolerant of older dicts that lack Day-4 flags."""
         data = dict(d)
         data["role"] = Role(data.pop("role"))
         tcs = data.get("tool_calls")
         if tcs is not None:
             data["tool_calls"] = [ToolCall(**tc) for tc in tcs]
+        # Older serialized messages may not have these fields.
+        for legacy in ("compressed", "truncated", "cache_breakpoint", "system", "tool"):
+            data.setdefault(legacy, False)
         return cls(**data)
 
 
