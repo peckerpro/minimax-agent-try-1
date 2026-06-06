@@ -45,6 +45,58 @@ class MemoryConfig(BaseModel):
     obsidian_auto_push_minutes: int = 15
 
 
+class LoaderConfig(BaseModel):
+    """File-extension dispatch for the RAG loader (see §7.2.1)."""
+
+    # The user can extend the default set via config.yaml:
+    #   rag.loader.extensions: [".md", ".txt", ".pdf", ...]
+    extensions: list[str] = Field(
+        default_factory=lambda: [
+            ".md",
+            ".txt",
+            ".py",
+            ".js",
+            ".ts",
+            ".tsx",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".csv",
+        ]
+    )
+    # Which PDF parser to prefer (chain falls back if the chosen one is
+    # unavailable or fails on the current file).
+    pdf_engine: Literal["mineru", "markitdown", "pypdf"] = "mineru"
+
+
+class StrategyConfig(BaseModel):
+    """Per-strategy entry under `rag.retrieval.strategies.<name>`."""
+
+    enabled: bool = True
+    weight: float = 1.0
+    # The `rerank` strategy uses an extra knob; ignore on the other three.
+    top_n: int = 20
+
+
+class RetrievalConfig(BaseModel):
+    """The 4-strategy advanced-retrieval pipeline (see ENGINEERING.md §7.2.4)."""
+
+    strategies: dict[str, StrategyConfig] = Field(
+        default_factory=lambda: {
+            "rewrite": StrategyConfig(weight=0.4),
+            "hyde": StrategyConfig(weight=0.2),
+            "multi_query": StrategyConfig(weight=0.2),
+            "rerank": StrategyConfig(weight=0.2, top_n=20),
+        }
+    )
+    # How many candidates each strategy retrieves before fusion.
+    candidate_k: int = 20
+    # How many results the final fused ranking returns.
+    final_top_k: int = 8
+    # Optional cross-encoder reranker model name; "" disables rerank.
+    reranker_model: str = ""
+
+
 class RagConfig(BaseModel):
     default_strategy: Literal["rewrite", "hyde", "multi_query", "rerank"] = "rewrite"
     chunk_size_tokens: int = 512
@@ -54,6 +106,8 @@ class RagConfig(BaseModel):
     embedding_dim: int = 1536
     chromadb_persist_dir: Path = Path("./data/chromadb")
     embedder_batch_size: int = 32
+    loader: LoaderConfig = Field(default_factory=LoaderConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
 
 class ToolsConfig(BaseModel):
