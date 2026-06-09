@@ -30,4 +30,4 @@ def test_hello_agent_version_exits_zero(worktree_root: Path) -> None:
     # Strip non-printable characters (rich adds them around the text).
     cleaned = "".join(ch for ch in result.stdout if ch.isprintable() or ch in "\n\r")
     assert "hello-agent" in cleaned
-    assert "0.1.0" in cleaned
+    assert "0.2.0" in cleaned

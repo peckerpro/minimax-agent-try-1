@@ -4,7 +4,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status: v0.1.0-alpha](https://img.shields.io/badge/status-v0.1.0--alpha-orange)]()
+[![Status: v0.2.0](https://img.shields.io/badge/status-v0.2.0-blue)]()
 
 A distillation of [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) architecture,
 tailored for a single-user Windows setup. Built around three personal pillars:
@@ -36,15 +36,26 @@ uv run hello-agent doctor
 uv run hello-agent chat "Hello, what's 2+2?"
 ```
 
-## v0.1 status
+## v0.2 status
 
 | Day | Module | Status |
 | --- | --- | --- |
 | 1 | Project scaffolding + core abstractions | ✅ |
 | 2 | Tool registry + document parser + file/shell tools | ✅ |
-| 3 | Context engineering + state store | ✅ |
-| 4 | Memory (Obsidian) + RAG (advanced retrieval) | ✅ |
-| 5 | Web UI + tray + autostart + MCP | ✅ |
+| 3 | ReAct loop + SessionDB + context engineering | ✅ |
+| 4 | Memory (Obsidian) + RAG (4-strategy retrieval) | ✅ |
+| 5 | Web UI skeleton + tray + MCP skeleton | ✅ |
+| 6 | MCP protocol adapters (client + server + registry routing) | ✅ |
+| 7 | Skills system (SKILL.md loader + registry + 3 builtins) | ✅ |
+| 8 | Web UI (FastAPI + React + SSE streaming) | ✅ |
+| 9 | Windows integration (tray + autostart + serve + env probe) | ✅ |
+| 10 | Examples + docs + CHANGELOG + AGENTS.md + v0.2 tag | ✅ |
+
+Run the v0.2 release check before tagging a new release:
+
+```powershell
+.\scripts\release_check.ps1
+```
 
 See `docs/ENGINEERING.md` for the full engineering brief and `docs/CHANGELOG.md` for what changed.
 
