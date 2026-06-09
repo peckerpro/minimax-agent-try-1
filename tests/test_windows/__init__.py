@@ -1,0 +1,1 @@
+"""Tests for hello_agent.windows/ — tray, autostart, env probe, hotkeys."""

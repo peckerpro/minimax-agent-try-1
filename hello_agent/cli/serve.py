@@ -64,8 +64,9 @@ def serve(
 
     if not no_tray and os.name == "nt":
         try:
-            from hello_agent.windows.tray import start_tray
+            from hello_agent.windows.tray import set_shutdown_callback, start_tray
 
+            set_shutdown_callback(request_shutdown)
             start_tray(port)
         except Exception as exc:  # noqa: BLE001
             logger.warning("tray failed to start: {}", exc)

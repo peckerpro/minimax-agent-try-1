@@ -44,6 +44,7 @@ def _register_subcommands() -> None:
     Other subcommands use add_typer because they have multiple sub-subcommands.
     """
     from hello_agent.cli import (  # noqa: PLC0415 — lazy import
+        autostart,
         chat_app,
         completions,
         doctor,
@@ -68,6 +69,7 @@ def _register_subcommands() -> None:
     app.add_typer(mcp.app, name="mcp")
     app.add_typer(skills.app, name="skills")
     app.add_typer(doctor.app, name="doctor")
+    app.add_typer(autostart.app, name="autostart")
     app.add_typer(completions.app, name="completion")
 
 
