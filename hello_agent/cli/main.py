@@ -7,6 +7,7 @@ Top-level subcommands:
 - rag      index / query
 - memory   show / search / export / forget
 - mcp      serve / connect
+- skills   list / show / install / validate SKILL.md files
 - serve    start web UI + tray
 - doctor   env self-check
 - completion  shell completion script
@@ -51,6 +52,7 @@ def _register_subcommands() -> None:
         rag,
         run,
         serve,
+        skills,
         tools_cmd,
     )
 
@@ -64,6 +66,7 @@ def _register_subcommands() -> None:
     app.add_typer(memory.app, name="memory")
     app.add_typer(tools_cmd.app, name="tools")
     app.add_typer(mcp.app, name="mcp")
+    app.add_typer(skills.app, name="skills")
     app.add_typer(doctor.app, name="doctor")
     app.add_typer(completions.app, name="completion")
 

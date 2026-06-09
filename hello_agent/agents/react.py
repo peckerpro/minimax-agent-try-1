@@ -10,6 +10,11 @@ The classic ReAct pattern:
        without dispatching any other tools in the same step.
 
 Borrowed shape from `NousResearch/hermes-agent/run_agent.py`, simplified.
+
+Day 7 update: before each LLM call, the agent injects the active skills
+for the current session as a `<available_skills>` block in the SYSTEM
+message. The injection is idempotent (multiple `step()` calls don't
+double-append) and a no-op when no skills are active.
 """
 from __future__ import annotations
 
@@ -59,6 +64,13 @@ class ReActAgent(Agent):
     # --- step -----------------------------------------------------------------
 
     def step(self, state: AgentState) -> AgentState:
+        # 0. Inject active skills into the SYSTEM message in-place. This
+        #    matches the hermes v0.1 contract: the LLM sees a fresh
+        #    `<available_skills>` block at every decision point. It's
+        #    idempotent (no double-append on retry) and a no-op if no
+        #    skills are active for this session.
+        self._inject_active_skills_into_state(state)
+
         # 1. Call LLM with current messages + available tool schemas
         tool_defs = self.tool_registry.list_tool_definitions(enabled_only=True)
         try:
@@ -138,6 +150,43 @@ class ReActAgent(Agent):
         return state
 
     # --- helpers exposed to subclasses (PlanAndSolve / Reflection) ------------
+
+    def _inject_active_skills_into_state(self, state: AgentState) -> None:
+        """Mutate the SYSTEM message in `state.messages` to include the
+        `<available_skills>` block for the current session.
+
+        Idempotent: if the block is already present (because a prior
+        `step()` added it), we don't double-append. If the state has no
+        SYSTEM message (legacy state), we no-op — the agent still runs
+        without skills.
+
+        The active list comes from
+        `hello_agent.skills.registry.SkillRegistry.active_skills(self.session_id)`.
+        If no skills are active for the session, we leave the SYSTEM
+        message untouched (so existing prompts don't gain a stray block).
+        """
+        # Lazy import: the skills module pulls in YAML + paths, neither of
+        # which the ReAct agent wants to import unconditionally.
+        from hello_agent.skills.registry import get_registry
+
+        if not state.messages:
+            return
+        sys_msg = state.messages[0]
+        if sys_msg.role != Role.SYSTEM:
+            return
+        # We use a copy of the SYSTEM message to avoid mutating in
+        # place when the registry returns the same content (cheaper
+        # than a string contains-check on every step()).
+        new_content = get_registry().inject_into_system_prompt(
+            sys_msg.content, session_id=self.session_id, include_all=False
+        )
+        if new_content != sys_msg.content:
+            state.messages[0] = Message(
+                role=sys_msg.role,
+                content=new_content,
+                name=sys_msg.name,
+                tool_call_id=sys_msg.tool_call_id,
+            )
 
     def _dispatch_tool(self, tc: ToolCall) -> ToolResult:
         """Permission check + circuit breaker + dispatch. Returns a ToolResult (never raises)."""

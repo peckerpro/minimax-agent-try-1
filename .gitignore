@@ -54,3 +54,7 @@ hello_agent/web/static/assets/
 .vscode/
 *.swp
 *.swo
+
+# OpenCode runtime temp data (regeneratable, no source value)
+.opencode/tmp/
+.opencode/cache/
