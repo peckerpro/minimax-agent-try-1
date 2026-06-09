@@ -7,6 +7,10 @@ Borrowed from `NousResearch/hermes-agent/tools/registry.py` with:
   `filter_by_profile()` for dynamic per-agent toolset shaping.
 - Added `auto_discover` opt-in to `__init__` so a freshly-built
   `ToolRegistry` can populate itself with builtin tools in one line.
+- Added `register_mcp_server(client)` and `unregister_mcp_server(name)`
+  to merge remote MCP tools into the registry; `execute()` routes to the
+  remote client transparently and the per-tool circuit breaker still
+  applies (v0.2 Day 6).
 """
 from __future__ import annotations
 
@@ -15,8 +19,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from hello_agent.core.exceptions import ToolNotFoundError
+from hello_agent.core.exceptions import CircuitOpenError, ToolNotFoundError
 from hello_agent.core.types import ToolDefinition, ToolResult
+from hello_agent.tools.circuit_breaker import (
+    check_breaker,
+    record_failure,
+    record_success,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -30,6 +39,12 @@ class _RegisteredTool:
     check_fn: Callable[[], bool] | None = None
     requires_env: list[str] = field(default_factory=list)
     dangerous: bool = False
+    # v0.2 Day 6: if `mcp_client` is set, the tool is a thin shim around an
+    # MCP server's `tools/call`. The dispatcher checks this attribute and
+    # routes through `_call_mcp` instead of calling `handler` directly.
+    # The circuit-breaker check still happens at the dispatcher level.
+    mcp_client: Any = None
+    mcp_server_name: str | None = None
 
 
 class ToolRegistry:
@@ -48,6 +63,10 @@ class ToolRegistry:
         self._disabled: set[str] = set()  # explicit disables override default-enabled
         self._confirmation_cache: dict[str, set[str]] = {}
         self._auto_discover_done: bool = False
+        # v0.2 Day 6: reverse map MCP-client (by id) → set of remote tool names
+        # we registered from it, so `unregister_mcp_server(client)` can cleanly
+        # remove the whole bundle.
+        self._mcp_clients: dict[int, set[str]] = {}
         if auto_discover:
             self.auto_discover()
 
@@ -104,6 +123,8 @@ class ToolRegistry:
         check_fn: Callable[[], bool] | None = None,
         requires_env: list[str] | None = None,
         dangerous: bool = False,
+        mcp_client: Any = None,
+        mcp_server_name: str | None = None,
     ) -> None:
         self._tools[name] = _RegisteredTool(
             name=name,
@@ -113,9 +134,106 @@ class ToolRegistry:
             check_fn=check_fn,
             requires_env=requires_env or [],
             dangerous=dangerous,
+            mcp_client=mcp_client,
+            mcp_server_name=mcp_server_name,
         )
         self._toolsets.setdefault(toolset, []).append(name)
         self._enabled.add(name)
+
+    # --- MCP integration (v0.2 Day 6) ---
+
+    def register_mcp_server(self, client: Any) -> list[str]:
+        """Merge a remote MCP server's tools into this registry.
+
+        `client` is an `MCPClient` (lazy-imported in `protocols.mcp_client`).
+        Each tool the server exposes becomes a local `_RegisteredTool` whose
+        `mcp_client` is set; `execute()` routes the call through
+        `_call_mcp`, and the per-tool circuit breaker is consulted on every
+        invocation (so a flapping remote server trips the breaker just like
+        a flaky local tool).
+
+        Returns the list of registered tool names.
+
+        Idempotency: re-registering the same client replaces any previously
+        registered tools from that client (matched by `id(client)`).
+        """
+        if client is None:
+            raise ValueError("register_mcp_server: client is None")
+        # Drop any prior registration from this client (idempotent re-register).
+        self.unregister_mcp_server(client)
+
+        client_id = id(client)
+        # `list_tools()` performs the JSON-RPC `tools/list` round-trip.
+        # We require the client to be connected; if not, raise clearly.
+        if not getattr(client, "connected", False):
+            try:
+                client.connect()
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"register_mcp_server: client {getattr(client, 'name', '?')!r} "
+                    f"failed to connect: {exc}"
+                ) from exc
+        tools = client.list_tools()
+        server_name = getattr(client, "name", "external")
+        toolset_name = f"mcp:{server_name}"
+        registered: list[str] = []
+        for tool in tools:
+            tname = str(tool.get("name") or "").strip()
+            if not tname:
+                continue
+            # Skip if a local tool already has this name — local wins.
+            if tname in self._tools:
+                _logger.debug(
+                    "register_mcp_server: skipping %r — already registered locally", tname
+                )
+                continue
+            schema = ToolDefinition(
+                name=tname,
+                description=str(tool.get("description") or ""),
+                parameters=dict(tool.get("inputSchema") or {"type": "object"}),
+            )
+            # The `handler` is never actually called for remote tools — the
+            # dispatcher checks `mcp_client` and routes through `_call_mcp`.
+            # We still provide a fallback that errors out clearly, in case
+            # someone calls the handler directly. Bind `tname` via default
+            # arg to avoid late-binding loop variable (ruff B023).
+
+            def _fallback(
+                args: dict[str, Any],
+                *,
+                _tname: str = tname,
+                **kw: Any,
+            ) -> ToolResult:  # pragma: no cover
+                return ToolResult(
+                    tool_call_id=kw.get("tool_call_id", ""),
+                    content=f'{{"error": "tool {_tname!r} is MCP-backed; call execute() not handler"}}',
+                    is_error=True,
+                )
+
+            self.register(
+                name=tname,
+                toolset=toolset_name,
+                schema=schema,
+                handler=_fallback,
+                mcp_client=client,
+                mcp_server_name=server_name,
+            )
+            registered.append(tname)
+        self._mcp_clients[client_id] = set(registered)
+        _logger.info(
+            "register_mcp_server: %s — registered %d remote tools: %s",
+            server_name, len(registered), registered,
+        )
+        return registered
+
+    def unregister_mcp_server(self, client: Any) -> int:
+        """Remove every tool previously registered from `client`. Returns count."""
+        if client is None:
+            return 0
+        names = list(self._mcp_clients.pop(id(client), set()))
+        for n in names:
+            self.unregister(n)
+        return len(names)
 
     def unregister(self, name: str) -> bool:
         """Remove a tool from the registry. Returns True if it existed.
@@ -139,6 +257,11 @@ class ToolRegistry:
         # Drop any per-session confirmations
         for cache in self._confirmation_cache.values():
             cache.discard(name)
+        # v0.2 Day 6: also drop from any MCP reverse-map entry
+        for client_id, names in list(self._mcp_clients.items()):
+            names.discard(name)
+            if not names:
+                self._mcp_clients.pop(client_id, None)
         return True
 
     def register_toolset(
@@ -262,7 +385,66 @@ class ToolRegistry:
                     ),
                     is_error=True,
                 )
+
+        # v0.2 Day 6: MCP-backed tools route through `_call_mcp` and the
+        # circuit breaker is consulted just like for local tools.
+        if tool.mcp_client is not None:
+            if not check_breaker(name):
+                raise CircuitOpenError(
+                    name,
+                    "circuit breaker open (MCP server flapping); refusing call",
+                )
+            try:
+                result = self._call_mcp(tool, name, arguments, tool_call_id=tool_call_id)
+            except Exception as exc:  # noqa: BLE001
+                # Connection-level errors trip the breaker; surface a
+                # stringified error result the same way local handlers do.
+                record_failure(name)
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    content=f"{{\"error\": \"{type(exc).__name__}: {exc}\"}}",
+                    is_error=True,
+                )
+            if result.is_error:
+                # Remote tool reported failure (e.g. invalid args) — count it.
+                record_failure(name)
+            else:
+                record_success(name)
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                content=result.text,
+                is_error=result.is_error,
+            )
+
         return tool.handler(arguments, session_id=session_id, tool_call_id=tool_call_id)
+
+    def _call_mcp(
+        self,
+        tool: _RegisteredTool,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        tool_call_id: str = "",
+    ) -> Any:
+        """Invoke a remote MCP tool and return its `MCPCallResult`.
+
+        Defined on the registry (not on `MCPClient`) so the lazy import of
+        `protocols.mcp_client` stays out of the registry's import surface.
+        `tool.mcp_client` is the live `MCPClient` instance; it already
+        carries a connected stdio session.
+        """
+        # Lazy import — the registry is imported widely; the MCP SDK is optional.
+        from hello_agent.protocols.mcp_client import MCPCallResult
+
+        client = tool.mcp_client
+        # Re-connect transparently if the user closed + reconnected the client.
+        if not getattr(client, "connected", False):
+            client.connect()
+        result = client.call_tool(name, arguments)
+        if not isinstance(result, MCPCallResult):
+            # Defensive: future SDK return shapes; coerce.
+            return MCPCallResult(text=str(result), is_error=True)
+        return result
 
     # --- confirmation ---
 
