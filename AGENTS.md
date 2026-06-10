@@ -80,7 +80,7 @@ uv run python examples/01_quick_chat.py --self-test # offline smoke
 
 ```powershell
 # Full suite (use this before committing)
-uv run pytest -q                                       # ~10s, all 469 tests
+uv run pytest -q                                       # ~60-70s, all 439 tests
 
 # Per-day suites (faster feedback)
 uv run pytest tests/test_protocols/ -q                 # Day 6 (MCP)

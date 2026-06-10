@@ -57,7 +57,9 @@ AGENTS.md + v0.2 release script).
 - New test modules: `tests/test_protocols/` (Day 6),
   `tests/test_skills/` (Day 7), `tests/test_web/` (Day 8),
   `tests/test_windows/` (Day 9), `tests/test_examples.py` (Day 10).
-- Full suite: 433 → 469 passing tests across 12 test packages.
+- Full suite: 433 → 439 passing tests across 12 test packages
+  (Day 10 adds 6 example tests; Day 9's 36 windows tests skip on
+  non-Windows and re-run on Windows).
 
 ### Notes
 - No breaking changes vs v0.1 — all v0.1 CLI commands, config keys,
