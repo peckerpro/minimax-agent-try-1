@@ -216,6 +216,77 @@ def _collect_checks(probes: dict[str, Any]) -> list[tuple[str, str, str, str | N
             )
         )
 
+    # Obsidian vault (optional but recommended for long-term memory)
+    try:
+        from hello_agent.core.config import get_config
+
+        vp = get_config().memory.obsidian_vault_path
+    except Exception:  # noqa: BLE001
+        vp = None
+    if vp:
+        vp = Path(str(vp)).expanduser()
+        if not vp.exists():
+            out.append(
+                (
+                    "obsidian vault",
+                    "warn",
+                    f"not found: {vp}",
+                    "create the directory or fix OBSIDIAN_VAULT_PATH",
+                )
+            )
+        elif not vp.is_dir():
+            out.append(
+                (
+                    "obsidian vault",
+                    "fail",
+                    f"not a directory: {vp}",
+                    "OBSIDIAN_VAULT_PATH must point to a directory",
+                )
+            )
+        else:
+            # Try a write probe — creates a tiny sentinel file and removes it.
+            try:
+                probe = vp / ".hello-agent-doctor-probe"
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink()
+            except OSError as exc:
+                out.append(
+                    (
+                        "obsidian vault",
+                        "fail",
+                        f"not writable: {vp} ({exc})",
+                        "check folder permissions",
+                    )
+                )
+            else:
+                # Real Obsidian vaults have a `.obsidian/` config dir; warn
+                # if it's missing so the user knows their git push side
+                # (Obsidian Git plugin) might not be wired yet.
+                has_obsidian_cfg = (vp / ".obsidian").is_dir()
+                is_git_repo = (vp / ".git").is_dir()
+                extras = []
+                if not has_obsidian_cfg:
+                    extras.append("no .obsidian/ — not a standard Obsidian vault")
+                if not is_git_repo:
+                    extras.append("not a git repo — git sync can't push without `git init`")
+                if env.obsidian_git_token:
+                    extras.append("GIT_TOKEN set — push enabled")
+                else:
+                    extras.append("no GIT_TOKEN — push disabled, set OBSIDIAN_GIT_TOKEN")
+                value = str(vp)
+                if extras:
+                    value = f"{vp} ({'; '.join(extras)})"
+                out.append(("obsidian vault", "ok", value, None))
+    else:
+        out.append(
+            (
+                "obsidian vault",
+                "warn",
+                "OBSIDIAN_VAULT_PATH not set",
+                "set in .env to enable long-term memory export",
+            )
+        )
+
     return out
 
 

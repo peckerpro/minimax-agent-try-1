@@ -5,6 +5,111 @@ All notable changes to `hello-agent-2` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-10
+
+A focused patch that completes the long-term memory ↔ Obsidian vault
+binding that v0.2 declared as a scaffold. The Obsidian vault is now
+the durable, human-readable source of truth for long-term memory; the
+SQLite `facts` table is a derived index for fast lookups; the GitHub
+mirror (`peckerpro/minimax-hello-agent-obsidian-knowledge-db`) is the
+off-machine backup that the Obsidian Git plugin and `hello-agent
+memory sync --force` keep in sync.
+
+### Added
+- **LongTermMemory ↔ Obsidian vault write-through.** `set_fact()` now
+  also writes a corresponding `.md` file to the vault's `memory/`
+  subdir via `ObsidianSync.export_memory()`. Round-trip is automatic:
+  every fact the agent remembers is visible in Obsidian Desktop and
+  pushed to the GitHub mirror by the background `GitSync` thread.
+  Pass `mirror_to_vault=False` to opt out (used by `reconcile` to
+  avoid feedback loops).
+- **`LongTermMemory.reconcile_with_vault()`.** Scans the Obsidian
+  vault and pulls in any facts the agent doesn't know about (added
+  in Obsidian Desktop) or whose value the user has edited (vault
+  wins on conflict). Returns a status dict with `added`, `updated`,
+  `skipped` counts.
+- **Lazy auto-reconcile on first read.** Every `get_fact` /
+  `list_facts` / `search` / `count` triggers a one-shot vault scan
+  on the first call of a `LongTermMemory` instance, gated by the
+  new `auto_reconcile=True` constructor flag. Tests pass
+  `auto_reconcile=False` to keep the test sandbox clean.
+- **Per-instance `vault_path` override.** `LongTermMemory(vault_path=…)`
+  bypasses the config-derived vault path so tests can point at a
+  temp dir. Production code leaves it `None` and the global config
+  is consulted.
+- **`hello-agent memory reconcile` CLI command.** Forces a vault →
+  SQLite pull without waiting for the next read of a
+  `LongTermMemory` instance. Emits a one-line summary or
+  `--json` for scripting.
+- **Doctor check for the Obsidian vault.** `hello-agent doctor run`
+  now reports: vault path, writability, presence of `.obsidian/`
+  (real Obsidian vault?), presence of `.git/` (git sync wired?),
+  GIT_TOKEN status. Surface area went from 12 → 13 checks.
+- **`ObsidianSync._find_existing_memory_file()`.** Internal helper
+  that lets `export_memory` keep the original `.md` filename stable
+  across re-exports on different days (the frontmatter `id` and
+  `created` are the true identity; the filename is just a hint).
+- **44 new tests** in `tests/test_memory/`:
+  - `test_obsidian_sync.py` (29 cases) — no-op scaffold, explicit
+    vault, export/import round-trip, wikilink + tag extraction,
+    cross-day filename stability, extract_relations, slug helper.
+  - `test_git_sync.py` (6 cases) — config gate, start/stop,
+    force_sync no-op, `_try_commit` with a real (init'd) vault,
+    remote URL construction.
+  - `test_long_term.py` (+9 cases) — write-through, mirror-to-vault
+    opt-out, reconcile add/update/skip, idempotency, lazy
+    auto-reconcile, one-shot flag.
+
+### Changed
+- `hello_agent/memory/long_term.py::LongTermMemory` grew from 280 →
+  442 lines. Public API is fully backward compatible (the new
+  `auto_reconcile` and `vault_path` params both default to
+  "old behavior"; `mirror_to_vault` defaults to `True` which is
+  the new opt-in/opt-out point).
+- `hello_agent/memory/obsidian_sync.py::ObsidianSync.export_memory`
+  now scans the memory dir for an existing same-id file before
+  creating a new one. Behavior is otherwise unchanged.
+- `hello_agent/memory/git_sync.py::GitSync.force_sync` now calls
+  `_ensure_repo` first, so `force_sync` works on a vault that was
+  never `git init`'d (previously required `start()` first). When
+  push is rejected as non-fast-forward, it does a fetch +
+  `--force-with-lease` automatically.
+- `hello_agent/cli/doctor.py` gained the vault check (described
+  above) — no other doctor behavior changed.
+- `hello_agent/core/config.py::load_config` no longer silently
+  drops `.env`'s `OBSIDIAN_GIT_REPO` when `config.yaml` has a
+  `memory:` section. The .env value is now applied unconditionally
+  (pre-existing bug fix; tests showed the wrong default
+  `peckerpro/hello-agent-memory` was being used instead of the
+  user-supplied `peckerpro/minimax-hello-agent-obsidian-knowledge-db`).
+
+### Fixed
+- `load_config` env-override precedence bug (described above).
+- `GitSync._try_push` falling through to "stale info" when a fresh
+  `git init` vault meets a non-empty remote — now handles this
+  case automatically via `fetch` + `--force-with-lease`.
+- `ObsidianSync.export_memory` creating duplicate `.md` files when
+  the same `memory_id` is exported on different days.
+- `__all__` debug residue in `git_sync.py` (was exporting
+  `["GitSync", "Lock", "os", "subprocess"]` — now `["GitSync"]`).
+
+### Notes
+- **End-to-end verified**: a test fact was exported to
+  `D:\hello_agent_obsidian_1\memory/`, committed locally, and
+  pushed to `https://github.com/peckerpro/minimax-hello-agent-obsidian-knowledge-db`
+  on `main`. The push succeeded on the first try after the
+  config-bug fix; the `.obsidian/` config dir is correctly
+  excluded from the GitHub mirror via the new vault-local
+  `.gitignore`.
+- **Branch policy**: agent pushes to `main` (matches GitHub's
+  default and what the Obsidian Git plugin would use). The local
+  vault is now on `main`; users cloning the repo on another
+  machine get the memory content by default.
+- **`.env` keys updated** (in this user's checkout):
+  `OBSIDIAN_VAULT_PATH=D:\hello_agent_obsidian_1`,
+  `OBSIDIAN_GIT_REPO=peckerpro/minimax-hello-agent-obsidian-knowledge-db`,
+  `OBSIDIAN_GIT_TOKEN=ghp_…` (set, gitignored).
+
 ## [0.2.0] - 2026-06-10
 
 The v0.2 release lands the four modules that were skeleton-only in v0.1

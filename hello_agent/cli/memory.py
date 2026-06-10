@@ -100,6 +100,39 @@ def forget(
     typer.echo(f"forgot {name}")
 
 
+@app.command("reconcile")
+def reconcile(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Pull facts from the Obsidian vault into the SQLite cache.
+
+    The vault is the source of truth — any facts the user added or
+    edited in Obsidian Desktop since the last sync are picked up.
+    Reverse direction (SQLite → vault) happens automatically on every
+    `set_fact` call (write-through).
+
+    Use this command when you want to force a refresh without waiting
+    for the next read of a `LongTermMemory` instance.
+    """
+    from hello_agent.memory.long_term import LongTermMemory
+
+    result = LongTermMemory().reconcile_with_vault()
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    if not result.get("configured", True):
+        typer.echo(
+            f"obsidian vault not configured ({result.get('reason', 'unknown')}); "
+            f"set OBSIDIAN_VAULT_PATH and retry."
+        )
+        raise typer.Exit(code=1)
+    typer.echo(
+        f"reconciled: +{result.get('added', 0)} added, "
+        f"~{result.get('updated', 0)} updated, "
+        f"={result.get('skipped', 0)} skipped"
+    )
+
+
 @app.command("sync")
 def sync(force: bool = typer.Option(False, "--force", help="Force a commit+push right now.")) -> None:
     """Trigger an immediate git sync (commit + push) of the Obsidian vault."""
