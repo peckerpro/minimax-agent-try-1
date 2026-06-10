@@ -16,19 +16,31 @@ def show(
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Show recent memory entries."""
+    """Show recent memory entries (most recently inserted first)."""
     from hello_agent.memory.long_term import LongTermMemory
 
     mem = LongTermMemory()
-    rows = mem.list_recent(limit=limit)
+    # list_facts() returns all facts ordered by id ASC; reverse so the most
+    # recently inserted rows come first, then apply the requested limit.
+    rows = list(reversed(mem.list_facts()))[: max(0, int(limit))]
     if json_output:
         typer.echo(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
         return
     if not rows:
-        typer.echo("(no memories yet)")
+        typer.echo(
+            "(no memories yet — use `hello-agent memory export` to add one, "
+            "or `hello-agent memory search` to query semantically.)"
+        )
         return
     for row in rows:
-        typer.echo(f"  [{row.get('kind', '?')}] {row.get('name') or row.get('id')}: {row.get('content', '')[:100]}")
+        value = row.get("value", "")
+        if not isinstance(value, str):
+            value = json.dumps(value, ensure_ascii=False, default=str)
+        typer.echo(
+            f"  #{row.get('id', '?')} "
+            f"[{row.get('source', '?')}] "
+            f"{row.get('key', '?')}: {value[:100]}"
+        )
 
 
 @app.command("search")
