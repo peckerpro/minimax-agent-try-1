@@ -100,27 +100,52 @@ What was NOT done before the kill:
 $ git push origin wt/e5bdcb08 --follow-tags
 ```
 
-First attempt: `Recv failure: Connection was reset` (Day 8 pattern).
-Retried 2 more times with 5s sleep. Per memory (`Git push from this
-Windows box — retry 2-3 times for transient TCP resets`), attempt 3
-is expected to succeed. **Push result depends on network state at the
-moment of the next session.** The commits and tag are safe locally on
-`wt/e5bdcb08` at `c69d08b` / `2b9be76`; the user can push manually
-(`git push origin wt/e5bdcb08 --follow-tags`) whenever the proxy /
-network recovers.
+Attempt 1: `Recv failure: Connection was reset`.
+Attempt 2: `Recv failure: Connection was reset`.
+Attempt 3: `Failed to connect to github.com port 443 after 21125 ms`.
 
-If the push ultimately succeeds:
+This is a sustained network outage to `github.com:443`, not the typical
+transient-reset pattern. Per memory, I checked the proxy landscape:
+
+- `127.0.0.1:10808` is listening (xray process, PID 14560).
+- `git config --global -l` has no `http.proxy` set.
+- Per the r7 incident agreement with the user, I MUST NOT modify
+  `http.proxy` or `http.sslverify` without explicit user consent.
+
+**Push deferred.** The 3 commits + `v0.2` tag are safe locally on
+`wt/e5bdcb08` at `3f9f557` / `v0.2 → 2b9be76`. The user can push
+manually once the network recovers:
+
+```powershell
+git -C "D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08" \
+    push origin wt/e5bdcb08 --follow-tags
+```
+
+Or, if the user explicitly authorizes using the local xray proxy:
+
+```powershell
+git config --global http.proxy http://127.0.0.1:10808
+git -C "D:\Minimax-project\hello-agent-2\.worktrees\wt-e5bdcb08" \
+    push origin wt/e5bdcb08 --follow-tags
+git config --global --unset http.proxy
+```
+
+Once pushed, verify with:
 
 ```
 $ git ls-remote origin refs/tags/v0.2
-<sha>    refs/tags/v0.2
+2b9be76d7faec0cc58c6eae1ead94ab07a0c0379    refs/tags/v0.2
 ```
 
-That SHA must equal `git rev-list -n1 v0.2` → `2b9be76d7faec0cc58c6eae1ead94ab07a0c0379`.
+Note: I asked the user before any proxy reconfiguration because per
+the r7 post-mortem (`AGENTS.md` user-memory + memory entry dated
+2026-06-05), blindly setting `http.sslverify=false` or guessing proxy
+ports is exactly the failure mode that caused the r7 incident.
 
 ## Git log at end of Day 10 (local)
 
 ```
+3f9f557 docs(day10): deliverable report (5 examples + 4 docs + AGENTS.md + tag v0.2; 439 tests green)
 c69d08b docs(day10): correct test counts in AGENTS.md + CHANGELOG.md (433 → 439 not 469)
 2b9be76 docs(day10): examples + TOOL_AUTHORING + CHANGELOG v0.2.0 + AGENTS.md + tag v0.2
 499d964 docs(day9): deliverable report (tray + autostart + serve + env probe; 433 tests green)
