@@ -104,6 +104,25 @@ class ObsidianSync:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _find_existing_memory_file(self, vault: Path, memory_id: str) -> Path | None:
+        """Look for an existing `.md` in the memory dir whose frontmatter id matches.
+
+        Returns the path if found, else None. Used by `export_memory` to
+        keep filenames stable across re-exports on different days.
+        """
+        try:
+            import frontmatter  # type: ignore[import-not-found]  # noqa: PLC0415
+        except ImportError:  # pragma: no cover
+            return None
+        for fp in self._memory_dir(vault).glob("*.md"):
+            try:
+                post = frontmatter.load(fp)
+            except Exception:  # noqa: BLE001
+                continue
+            if post.get("id") == memory_id:
+                return fp
+        return None
+
     def _disabled_log(self, op: str) -> None:
         logger.bind(category="memory").info(
             "obsidian_sync.{}: no-op (OBSIDIAN_VAULT_PATH is not set)", op
@@ -169,7 +188,13 @@ class ObsidianSync:
 
         slug = _slugify(memory_id)
         date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = self._memory_dir(vault) / f"{date_str}_{slug}.md"
+        # Look for an existing .md with the same frontmatter `id` so
+        # re-exports on later days overwrite the original file in place
+        # instead of creating a duplicate. The filename is stable for
+        # the lifetime of the memory; the frontmatter `created` is the
+        # true creation timestamp.
+        existing_path = self._find_existing_memory_file(vault, memory_id)
+        file_path = existing_path or self._memory_dir(vault) / f"{date_str}_{slug}.md"
         file_path.write_text(frontmatter.dumps(post), encoding="utf-8")
         self._last_export[memory_id] = str(file_path)
         logger.bind(category="memory").info(
