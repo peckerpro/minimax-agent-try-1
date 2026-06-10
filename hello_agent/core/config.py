@@ -231,6 +231,8 @@ def load_config(config_path: Path | None = None) -> HelloAgentConfig:
         data = loaded
 
     # The .env OBSIDIAN_VAULT_PATH / OBSIDIAN_GIT_* are convenience overrides.
+    # They take precedence over config.yaml defaults — use `setdefault` only
+    # for the `memory` parent dict, then explicitly assign each key.
     env = load_env()
     if env.obsidian_vault_path and "memory" not in data:
         data["memory"] = {}
@@ -238,8 +240,8 @@ def load_config(config_path: Path | None = None) -> HelloAgentConfig:
         data.setdefault("memory", {})["obsidian_vault_path"] = env.obsidian_vault_path
     if env.obsidian_git_token:
         data.setdefault("memory", {})["obsidian_git_token"] = env.obsidian_git_token
-    if env.obsidian_git_repo and "memory" not in data:
-        data["memory"] = {"obsidian_git_repo": env.obsidian_git_repo}
+    if env.obsidian_git_repo:
+        data.setdefault("memory", {})["obsidian_git_repo"] = env.obsidian_git_repo
 
     return HelloAgentConfig(**data)
 

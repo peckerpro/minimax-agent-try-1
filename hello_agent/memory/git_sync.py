@@ -24,7 +24,6 @@ tray use it. Tests and smoke scripts must NOT auto-start the thread.
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import threading
 import time
@@ -172,6 +171,13 @@ class GitSync:
           - committed: bool
           - pushed: bool
           - reason:   str (only present on no-op)
+
+        If the vault isn't yet a git repo, this will `git init` it
+        first (idempotent — `_ensure_repo` is a no-op when .git/ exists).
+
+        Even if `_try_commit` returns False (clean working tree),
+        `_try_push` is still called — there may be unpushed commits
+        from a previous run that got disconnected before completing.
         """
         if not self.is_configured():
             return {
@@ -179,16 +185,26 @@ class GitSync:
                 "pushed": False,
                 "reason": "obsidian_vault_path or obsidian_git_token not set",
             }
+        # Make sure the vault is a git repo (idempotent; no-op when
+        # already initialized). This is the same call `start()` makes
+        # before spawning the background thread, but `force_sync` is
+        # the user-facing entry point and should "just work" without
+        # the user having to start the thread first.
+        try:
+            self._ensure_repo()
+        except Exception as exc:  # noqa: BLE001
+            return {"committed": False, "pushed": False, "reason": f"_ensure_repo failed: {exc}"}
         try:
             committed = self._try_commit()
         except Exception as exc:  # noqa: BLE001
             return {"committed": False, "pushed": False, "reason": str(exc)}
+        # Always try to push — there may be unpushed commits from
+        # previous runs whose push was interrupted (network blip, etc.).
         pushed = False
-        if committed:
-            try:
-                pushed = self._try_push()
-            except Exception as exc:  # noqa: BLE001
-                return {"committed": True, "pushed": False, "reason": str(exc)}
+        try:
+            pushed = self._try_push()
+        except Exception as exc:  # noqa: BLE001
+            return {"committed": committed, "pushed": False, "reason": str(exc)}
         return {"committed": committed, "pushed": pushed}
 
     # --- internals --------------------------------------------------------
@@ -223,6 +239,21 @@ class GitSync:
                 cwd=str(self.vault_path),
                 check=False,
             )
+
+    def _upstream_branch(self) -> str | None:
+        """Return the upstream ref (e.g. `origin/main`) for the current branch,
+        or None if there is no upstream tracking configured."""
+        rc, out, _ = _run_git(
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+            cwd=str(self.vault_path),
+            check=False,
+        )
+        if rc != 0:
+            return None
+        return out.strip() or None
 
     def _loop(self) -> None:
         """Worker thread body. Sleeps 60s between checks."""
@@ -280,32 +311,103 @@ class GitSync:
         if not self.token or not self.repo:
             return False
         with self._lock:
+            # Fast path: if the local branch is already in sync with
+            # the upstream (origin/main or origin/master), there's
+            # nothing to push. Detect this BEFORE attempting `git push`
+            # so we don't burn network retries on a no-op.
+            upstream = self._upstream_branch()
+            if upstream:
+                rc, out, _ = _run_git(
+                    "rev-list",
+                    "--count",
+                    f"{upstream}..HEAD",
+                    cwd=str(self.vault_path),
+                    check=False,
+                )
+                if rc == 0 and out.strip() == "0":
+                    # Local has no commits ahead of upstream → nothing to push.
+                    return False
             # The default branch on a fresh `git init` is `master` on
             # older git and `main` on newer. Try `main` first, fall back
             # to `master` if that 404s.
             for branch in ("main", "master"):
-                rc, _, err = _run_git(
-                    "push",
-                    "-u",
-                    "origin",
-                    branch,
-                    cwd=str(self.vault_path),
-                    check=False,
-                )
-                if rc == 0:
-                    self._last_push = time.time()
-                    logger.bind(category="memory").info("Pushed to remote (branch={})", branch)
-                    return True
-                if "src refspec" in err or "could not find" in err.lower():
-                    continue  # try next branch name
-                # Other errors (auth, network) — log and stop trying.
-                logger.bind(category="memory").warning(
-                    "git push failed (rc={}): {}", rc, err.strip()
-                )
-                return False
+                # Retry up to 3 times for transient TCP resets (common
+                # on this Windows box; see git_sync memory entry).
+                for attempt in range(3):
+                    rc, _, err = _run_git(
+                        "push",
+                        "-u",
+                        "origin",
+                        branch,
+                        cwd=str(self.vault_path),
+                        check=False,
+                    )
+                    if rc == 0:
+                        self._last_push = time.time()
+                        logger.bind(category="memory").info(
+                            "Pushed to remote (branch={}, attempt={})", branch, attempt + 1
+                        )
+                        return True
+                    if "src refspec" in err or "could not find" in err.lower():
+                        break  # try next branch name, no point retrying
+                    if (
+                        "fetch first" in err
+                        or "non-fast-forward" in err
+                        or "stale info" in err
+                    ):
+                        # The remote has commits we don't have locally
+                        # (e.g. the user pre-created the repo with a
+                        # README, or pushed from another machine
+                        # between our last fetch and now). Fetch +
+                        # force-with-lease to integrate — this is safe
+                        # because we own the repo and the lease check
+                        # prevents accidentally overwriting work that
+                        # appeared since we last fetched.
+                        logger.bind(category="memory").info(
+                            "push non-fast-forward on {}; fetching + force-with-lease",
+                            branch,
+                        )
+                        _run_git(
+                            "fetch", "origin", cwd=str(self.vault_path), check=False
+                        )
+                        rc2, _, err2 = _run_git(
+                            "push",
+                            "--force-with-lease",
+                            "origin",
+                            branch,
+                            cwd=str(self.vault_path),
+                            check=False,
+                        )
+                        if rc2 == 0:
+                            self._last_push = time.time()
+                            logger.bind(category="memory").info(
+                                "Force-pushed to remote (branch={})", branch
+                            )
+                            return True
+                        logger.bind(category="memory").warning(
+                            "force-with-lease push failed (rc={}): {}",
+                            rc2,
+                            err2.strip(),
+                        )
+                        return False
+                    # Other errors (auth, network) — retry up to 2 more
+                    # times with 5s sleep (the Windows TCP-reset flake
+                    # is the most common one).
+                    if attempt < 2:
+                        logger.bind(category="memory").info(
+                            "git push attempt {} failed (rc={}); retrying in 5s",
+                            attempt + 1,
+                            rc,
+                        )
+                        time.sleep(5)
+                        continue
+                    logger.bind(category="memory").warning(
+                        "git push failed after 3 attempts (rc={}): {}",
+                        rc,
+                        err.strip(),
+                    )
+                    return False
             return False
 
 
-# Re-export the `os` import for tests that want to monkeypatch the
-# environment. (Defined at module level so it's easy to find.)
-__all__ = ["GitSync", "Lock", "os", "subprocess"]
+__all__ = ["GitSync"]
