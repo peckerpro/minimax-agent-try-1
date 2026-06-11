@@ -14,7 +14,6 @@ the user prompt).
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -29,19 +28,16 @@ router = APIRouter()
 
 
 # ----- helpers ---------------------------------------------------------------
-
-
-def _open_episodic() -> Iterator[EpisodicMemory]:
-    """Yield a fresh `EpisodicMemory` and close it on exit.
-
-    Used as a context manager style helper for the route handlers. We
-    avoid module-level state because uvicorn workers can fork.
-    """
-    em = EpisodicMemory()
-    try:
-        yield em
-    finally:
-        em.close()
+#
+# `EpisodicMemory` already implements `__enter__` / `__exit__` (see
+# `hello_agent/memory/episodic.py`), so we can use it directly in
+# `with` statements. The earlier `_open_episodic` helper wrapped a
+# `@contextmanager` generator and triggered a `TypeError: 'generator'
+# object does not support the context manager protocol` in the
+# Web UI's session list panel — FastAPI's async routing somehow
+# re-evaluated the generator under the wrong frame. Using the
+# class directly (which has explicit `__enter__` / `__exit__`) avoids
+# the problem entirely.
 
 
 class SessionSummary(BaseModel):
@@ -72,7 +68,7 @@ async def list_sessions(limit: int = 50) -> list[SessionSummary]:
     """Return the most-recent sessions (across all session_ids, newest first)."""
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be in [1, 500]")
-    with _open_episodic() as em:
+    with EpisodicMemory() as em:
         rows = em.list_recent(limit=limit)
     out: list[SessionSummary] = []
     for r in rows:
@@ -93,7 +89,7 @@ async def get_session(session_id: str) -> SessionDetail:
     """Return every episode (summary row) for one session, oldest first."""
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    with _open_episodic() as em:
+    with EpisodicMemory() as em:
         rows = em.list_recent(limit=500, session_id=session_id)
     # list_recent returns DESC; flip to ASC for the UI's natural reading order.
     rows.reverse()
@@ -114,7 +110,7 @@ async def resume_session(session_id: str) -> ResumeResponse:
     """
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    with _open_episodic() as em:
+    with EpisodicMemory() as em:
         rows = em.list_recent(limit=500, session_id=session_id)
     if not rows:
         raise HTTPException(status_code=404, detail=f"no episodes for session {session_id!r}")
