@@ -47,6 +47,7 @@ def _register_subcommands() -> None:
         autostart,
         chat_app,
         completions,
+        desktop,
         doctor,
         mcp,
         memory,
@@ -54,6 +55,7 @@ def _register_subcommands() -> None:
         run,
         serve,
         skills,
+        start,
         tools_cmd,
     )
 
@@ -63,6 +65,8 @@ def _register_subcommands() -> None:
     app.add_typer(chat_app.app, name="chat")
     app.add_typer(run.app, name="run")
     app.add_typer(serve.app, name="serve")
+    app.add_typer(desktop.app, name="desktop")
+    app.add_typer(start.app, name="start")
     app.add_typer(rag.app, name="rag")
     app.add_typer(memory.app, name="memory")
     app.add_typer(tools_cmd.app, name="tools")
